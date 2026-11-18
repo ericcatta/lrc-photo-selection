@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lrc-photo-selection"
+version = "0.1.0"
+description = "Local coverage-first photo selection for Lightroom Classic"
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.32,<1", "pydantic>=2.10,<3", "Pillow>=11,<13"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "httpx>=0.28,<1", "lupa>=2.6,<3"]
+local-ai = ["torch>=2.6,<3", "transformers>=4.51,<5", "numpy>=2,<3"]
+
+[project.scripts]
+lrc-selection = "lrc_selection.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]
