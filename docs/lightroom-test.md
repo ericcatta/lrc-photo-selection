@@ -1,6 +1,6 @@
 # Prova in Lightroom Classic
 
-La prima verifica usa il catalogo vecchio JPEG autorizzato dall’utente, aprendo il file con doppio clic nel Finder. Il catalogo principale non autorizzato è escluso da queste prove. Il plugin non impone blocchi per nome o anno del catalogo.
+Il campione iniziale era il catalogo vecchio JPEG. Il 18 novembre 2026 il proprietario ha aperto personalmente `catalogo-di-prova.lrcat` e autorizzato la cartella cartella del campione autorizzato (161 foto totali, 160 visibili al momento della selezione). Il catalogo principale non autorizzato è escluso da queste prove. Il plugin non impone blocchi per nome o anno del catalogo.
 
 1. Aprire soltanto il catalogo di prova concordato. In **File → Gestione plug-in**, aggiungere `plugin/lrc-photo-selection.lrplugin`.
 2. Avviare il backend locale; in **Libreria → Extra plug-in → Configura connessione locale** inserire il token locale.
@@ -22,3 +22,17 @@ Il controllo grafico del Mac ha restituito `cgWindowNotFound`, impedendo il dopp
 - “Mostra le candidate” deve selezionare gli identificativi corretti senza scrivere metadati o raccolte. Con filtri o sorgenti che nascondono candidate deve segnalare la selezione parziale.
 - La raccolta locale facoltativa non è implementata: prima servirà verificare sul vero SDK che la creazione non abiliti sincronizzazione.
 - Il controllo grafico è stato ritentato dopo l’audit: Finder continua a rispondere `cgWindowNotFound`. Nessun catalogo aperto e nessuna prova reale dichiarata completata.
+
+## Collaudo reale del 18 novembre 2026 — in corso
+
+Plugin installato e attivo; collegamento al backend locale confermato dal proprietario con apertura della web app. Il token locale viene individuato dal plugin e salvato nel portachiavi solo dopo conferma.
+
+Il primo comando Prepara servizio si è fermato nella registrazione locale: `os.rename` non è disponibile nel runtime SDK. Corretto usando `LrFileUtils.move`, con file pending/previous e recupero dello stato precedentemente confermato. Il solo temporaneo di registrazione prodotto dal tentativo fallito è stato validato per il catalogo autorizzato e recuperato; nessun file del catalogo o fotografia è stato modificato. Plugin ricaricato dalla Gestione plug-in.
+
+Verifica automatica: 63 test backend passati nella sandbox; il test Apple Vision su immagine sintetica fallisce nella sandbox ma passa separatamente fuori dalla sandbox (64 casi complessivi). Comprende simulazioni di guasti dello storage eseguendo Common.lua reale con `os.rename` assente.
+
+Importazione reale ancora da riprovare: il controllo grafico restituisce timeout durante la chiusura della Gestione plug-in. Nessuna stella applicata; stato XMP non ancora verificato, ritorno delle stelle non collaudato.
+
+### Importazione ricevuta
+
+Il secondo tentativo ha trasferito 160/160 anteprime con 160 identificativi distinti, ma il completamento ha restituito 422: il plugin inviava `{}` mentre il backend richiede `null` per un nuovo servizio. Corretto Prepare.lua e aggiunto test che esegue Lua reale e verifica il payload contro FastAPI. Il servizio «Servizio di prova» è stato completato tramite API locale ed è `ready`; questa ripresa manuale non certifica ancora il completamento end-to-end dal plugin corretto. Nessuna decisione manuale o stella applicata. La cartella indicava 161 foto totali, ma la selezione autorizzata e trasmessa conteneva 160 foto visibili.

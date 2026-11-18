@@ -19,7 +19,7 @@ Il backend prepara un piano immutabile, confermato esplicitamente nella web app;
 L'auto-write XMP non ha un getter pubblico SDK verificato. Prima di ogni applicazione l'utente deve controllare nelle impostazioni Lightroom che la scrittura automatica sia disabilitata. Se non può verificarlo, non si applicano stelle. Il plugin non cambia preferenze e non chiama salvataggi metadati. Questa conferma manuale è una precondizione operativa, non una verifica automatica dell'impostazione.
 
 ## Limiti espliciti
-Il primo motore raggruppa soltanto JPEG derivati identici byte per byte. Non afferma di riconoscere scene, persone o pose. Anche le anteprime identiche non dimostrano identità degli originali ad alta risoluzione. Istruzioni libere vengono salvate e marcate non supportate. La modalità ibrida non invia richieste finché campione, modello, configurazione e budget non sono autorizzati e verificati.
+Il primo motore raggruppa soltanto JPEG derivati identici byte per byte. Non afferma di riconoscere scene, persone o pose. Anche le anteprime identiche non dimostrano identità degli originali ad alta risoluzione. Le istruzioni libere vengono ora valutate dal modello visivo locale Qwen3-VL quando installato; in assenza del modello l’analisi con istruzioni è bloccata. La modalità ibrida non invia richieste finché campione, modello, configurazione e budget non sono autorizzati e verificati.
 
 Il catalogo principale non autorizzato è escluso dai test del team, non dall'uso del prodotto. Nessuna regola nel plugin blocca cataloghi per anno.
 
@@ -30,3 +30,13 @@ Gli import incrementali hanno un ID operazione proprio e vengono chiusi con quel
 La cronologia salva prima/dopo delle singole decisioni o sostituzioni atomiche e un cursore persistente. Una nuova decisione dopo Annulla apre un nuovo ramo e scarta la possibilità di ripristinare il vecchio ramo. Non è una cronologia delle analisi: annullare un override può lasciare lo stesso risultato se la proposta automatica lo produce indipendentemente. Nessuna operazione di cronologia modifica Lightroom.
 
 La presentazione calcola rappresentanti e avvisi dalla selezione effettiva. L’archivio è locale e reversibile; non elimina anteprime o originali. I dettagli locali usano una cache separata per componente, checksum anteprima e versione. Vedere audit-plan.md per protocollo e limiti.
+
+## Selezione guidata dal testo
+
+Il preset è una sorgente opzionale: scegliendolo si copiano istruzioni e criteri nella configurazione modificabile del servizio. Aggiornare/salvare un preset non cambia i servizi precedenti. Il testo originale viene conservato integralmente e passato a ogni valutazione visiva; una sintesi interna non lo sostituisce e non richiede un passaggio aggiuntivo dell’utente.
+
+Qwen3-VL 4B quantizzato usa MLX sul Mac. Ogni anteprima riceve una valutazione strutturata yes/no/uncertain e motivazione, con preferenze ordinali e scene ipotizzate. Ambiguità e criteri non verificabili producono avvisi; non sono interpretati come criteri soddisfatti. Il modello non certifica identità, equivalenza o copertura. Le valutazioni incerte/non pertinenti non riempiono il numero richiesto. La diversità per etichette di scena è euristica, non riconoscimento affidabile delle situazioni.
+
+La shortlist è una proposta da rivedere, distinta dalle candidate conservative. Solo «Usa questa proposta», dopo avviso di copertura, registra decisioni annullabili nel servizio: nessuna mutazione Lightroom. Le decisioni manuali preesistenti prevalgono. Il piano stelle è un passaggio ulteriore e continua a consentire solo 0→1.
+
+La configurazione OpenAI espone chiave (portachiavi nativo) e modello. Il costruttore Responses conserva il testo originale come contenuto utente distinto dalle istruzioni tecniche e imposta store=false. Il trasporto di analisi cloud, il budget e il registro consumi non sono ancora abilitati: salvare la configurazione non invia foto.

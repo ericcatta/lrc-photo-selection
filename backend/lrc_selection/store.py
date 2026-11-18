@@ -10,6 +10,11 @@ WEDDING = {'id': 'wedding', 'name': 'Matrimonio', 'version': 1, 'criteria': [
     'Preferire varianti significative a duplicati',
 ]}
 
+NATURE = {'id': 'nature', 'name': 'Natura e animali', 'version': 1, 'subject_query': 'animali e uccelli', 'criteria': [
+    'Conservare specie, ambienti e azioni differenti',
+    'Confrontare le varianti di posa prima di ridurre le raffiche',
+]}
+
 class Store:
     def __init__(self, root: Path):
         self.root = root
@@ -26,6 +31,7 @@ class Store:
                 CREATE TABLE IF NOT EXISTS batches(id TEXT PRIMARY KEY, service_id TEXT NOT NULL, body TEXT NOT NULL);
             ''')
             db.execute('INSERT OR IGNORE INTO presets VALUES(?,?)', ('wedding', json.dumps(WEDDING)))
+            db.execute('INSERT OR IGNORE INTO presets VALUES(?,?)', ('nature', json.dumps(NATURE)))
             if version == 0:
                 db.execute('PRAGMA user_version=1')
         self.path.chmod(0o600)

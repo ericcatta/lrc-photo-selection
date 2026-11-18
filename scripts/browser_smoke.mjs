@@ -81,6 +81,14 @@ try {
   await click('Riapri servizio');
   await waitFor("[...document.querySelectorAll('button')].some(b=>b.textContent==='Archivia servizio'&&!b.disabled)");
   console.log(JSON.stringify({review:true,comparison:true,exactPlan:true,simulatedReceipt:true,incrementalImport:true,archiveReopen:true,realCatalogAccess:false}));
+  // Show current preset workflow using this isolated synthetic service only.
+  await evaluate("(()=>{const label=[...document.querySelectorAll('.config label')].find(x=>x.textContent.startsWith('Parti da un preset'));const select=label?.querySelector('select');if(!select)return false;select.value='nature:1';select.dispatchEvent(new Event('change',{bubbles:true}));return true;})()");
+  await waitFor("document.querySelector('.config textarea')?.value!==undefined");
+  await click('Configurazione OpenAI');
+  await waitFor("[...document.querySelectorAll('label')].some(x=>x.textContent==='Chiave API')");
+  if(await evaluate("document.querySelector('input[type=password]')?.value!==''"))throw new Error('Screenshot must not contain API key');
+  const presetDraft=await evaluate("({instructions:[...document.querySelectorAll('.config label')].find(x=>x.textContent.startsWith('Istruzioni per la selezione'))?.querySelector('textarea')?.value,criteria:[...document.querySelectorAll('.config label')].find(x=>x.textContent.startsWith('Criteri del servizio'))?.querySelector('textarea')?.value})");
+  if(!presetDraft.criteria?.includes('Conservare specie'))throw new Error('Preset did not populate editable criteria');
   const metrics=await call('Page.getLayoutMetrics');
   const height=Math.ceil(metrics.cssContentSize.height);
   const image=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true,clip:{x:0,y:0,width:1500,height,scale:1}});
@@ -88,7 +96,7 @@ try {
   console.log(JSON.stringify({file:'.build/webapp-audit.png',width:1500,height,syntheticCards:7}));
   await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   const mobile=await evaluate('({width:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth})');
-  if(mobile.scroll>mobile.width)throw new Error('Mobile horizontal overflow: '+JSON.stringify(mobile));
+  if(mobile.scroll>mobile.width){const overflow=await evaluate("[...document.querySelectorAll('body *')].filter(e=>e.getBoundingClientRect().right>document.documentElement.clientWidth+1).map(e=>({tag:e.tagName,cls:e.className,text:e.textContent.slice(0,60),right:e.getBoundingClientRect().right})).slice(0,12)");throw new Error('Mobile horizontal overflow: '+JSON.stringify({mobile,overflow}));}
   const mobileImage=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
   await writeFile('.build/webapp-audit-mobile.png',Buffer.from(mobileImage.data,'base64'));
   console.log(JSON.stringify({mobile}));

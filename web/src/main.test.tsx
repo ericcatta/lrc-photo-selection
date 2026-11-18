@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { App } from './main';
 import type { Preset, Service } from './api';
 
-const preset: Preset = {id:'wedding',name:'Matrimonio',version:1,criteria:['Preservare varianti']};
+const preset: Preset = {id:'wedding',name:'Matrimonio',version:1,criteria:['Preservare varianti'],subject_query:'uccelli',instructions:'Conserva varianti del volo'};
 let service: Service;
 let calls: {path:string;method:string;body:Record<string,any>|undefined}[];
 function json(value:unknown,status=200){return new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});}
@@ -24,8 +24,11 @@ beforeEach(()=>{
     calls.push({path,method,body});
     if(path==='/session')return json({ok:true});
     if(path==='/services')return json([{id:service.id,title:service.title,photo_count:2,revision:service.revision,status:service.status,archived:service.archived},{id:'second',title:'SECONDO SINTETICO',photo_count:2,revision:1,status:'ready'}]);
-    if(path==='/capabilities')return json({features:false});
+    if(path==='/capabilities')return json({features:false,instructions:true});
+    if(path==='/presets'&&method==='POST')return json({...body,id:'new-preset',version:1});
+    if(path==='/presets/wedding'&&method==='PUT')return json({...body,id:'wedding',version:2});
     if(path==='/presets')return json([preset]);
+    if(path.endsWith('/accept-shortlist'))return json({...service,revision:service.revision+1});
     if(path==='/services/synthetic')return json(service);
     if(path.endsWith('/settings')){service={...service,revision:service.revision+1,settings:{...body.settings,preset_snapshot:preset}};return json(service);}
     if(path.includes('/decisions/')){
@@ -51,6 +54,51 @@ afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 async function workspace(){render(<App/>);await screen.findByRole('option',{name:/TEST SINTETICO/});fireEvent.change(screen.getByLabelText('Servizio'),{target:{value:'synthetic'}});await screen.findByRole('heading',{name:'Configura la selezione'});}
 
 describe('Revisione senza dati reali',()=>{
+  it('applica il preset alla bozza e mantiene i criteri modificabili per il servizio',async()=>{
+    service={...service,settings:{...service.settings,preset_id:'',preset_version:0,preset_snapshot:null,service_criteria:[],subject_query:''}};
+    await workspace();
+    fireEvent.change(screen.getByLabelText('Parti da un preset'),{target:{value:'wedding:1'}});
+    expect((screen.getByLabelText('Criteri del servizio, uno per riga') as HTMLTextAreaElement).value).toBe('Preservare varianti');
+    expect((screen.getByLabelText('Soggetto da privilegiare') as HTMLInputElement).value).toBe('uccelli');
+    expect((screen.getByLabelText('Istruzioni per la selezione') as HTMLTextAreaElement).value).toBe('Conserva varianti del volo');
+    fireEvent.change(screen.getByLabelText('Criteri del servizio, uno per riga'),{target:{value:'Conservare il volo'}});
+    fireEvent.click(screen.getByRole('button',{name:'Salva criteri'}));
+    await waitFor(()=>expect(calls.some(c=>c.path.endsWith('/settings'))).toBe(true));
+    expect(calls.find(c=>c.path.endsWith('/settings'))?.body?.settings).toMatchObject({service_criteria:['Conservare il volo'],subject_query:'uccelli'});
+    expect(calls.some(c=>c.path.startsWith('/presets')&&c.method!=='GET')).toBe(false);
+    fireEvent.click(screen.getByRole('button',{name:'Rimuovi preset e criteri'}));
+    expect((screen.getByLabelText('Criteri del servizio, uno per riga') as HTMLTextAreaElement).value).toBe('');
+  });
+  it('filtra la proposta senza cambiare decisioni o stelle',async()=>{
+    service={...service,proposal:{selected:['p0','p1'],shortlist:['p1'],groups:[],reasons:{},warnings:[],engine:'synthetic'}};
+    await workspace();
+    expect((screen.getByRole('checkbox',{name:'Proposta da rivedere (1)'}) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getAllByRole('article')).toHaveLength(1);
+    expect(screen.getByText('sintetica-1.jpg')).toBeTruthy();
+    expect(calls.some(c=>c.method!=='GET')).toBe(false);
+  });
+  it('salva un nuovo preset dalle istruzioni e dai criteri del servizio',async()=>{
+    await workspace();
+    fireEvent.change(screen.getByLabelText('Istruzioni per la selezione'),{target:{value:'Conserva una foto per azione'}});
+    fireEvent.change(screen.getByLabelText('Criteri del servizio, uno per riga'),{target:{value:'Azioni differenti'}});
+    fireEvent.click(screen.getByRole('button',{name:'Salva come nuovo preset'}));
+    const dialog=await screen.findByRole('dialog',{name:'Nuovo preset'});
+    expect((within(dialog).getByLabelText('Istruzioni del preset') as HTMLTextAreaElement).value).toBe('Conserva una foto per azione');
+    fireEvent.change(within(dialog).getByLabelText('Nome'),{target:{value:'Azioni'}});
+    fireEvent.click(within(dialog).getByRole('button',{name:'Salva preset'}));
+    await waitFor(()=>expect(calls.some(c=>c.path==='/presets'&&c.method==='POST')).toBe(true));
+    expect(calls.find(c=>c.path==='/presets'&&c.method==='POST')?.body).toMatchObject({name:'Azioni',instructions:'Conserva una foto per azione',criteria:['Azioni differenti']});
+  });
+  it('richiede conferma prima di adottare la proposta senza applicare stelle',async()=>{
+    service={...service,proposal:{selected:['p0','p1'],shortlist:['p1'],groups:[],reasons:{},warnings:[],engine:'synthetic'}};
+    await workspace();
+    fireEvent.click(screen.getByRole('button',{name:'Usa questa proposta (1)'}));
+    const dialog=await screen.findByRole('dialog',{name:'Usa la proposta come selezione'});
+    expect(calls.some(c=>c.path.endsWith('/accept-shortlist'))).toBe(false);
+    fireEvent.click(within(dialog).getByRole('button',{name:'Conferma candidate'}));
+    await waitFor(()=>expect(calls.find(c=>c.path.endsWith('/accept-shortlist'))?.body).toEqual({revision:1,confirm_last:true}));
+    expect(calls.some(c=>c.path.includes('/rating-'))).toBe(false);
+  });
   it('salva criteri senza avviare implicitamente l’analisi',async()=>{
     await workspace();
     fireEvent.change(screen.getByLabelText('Numero di candidate'),{target:{value:'1'}});
@@ -142,7 +190,7 @@ describe('Revisione senza dati reali',()=>{
     fireEvent.keyDown(document.body,{key:'ArrowRight'});
     const first=screen.getAllByRole('article')[0];
     expect(document.activeElement).toBe(first);
-    fireEvent.keyDown(screen.getByLabelText('Istruzioni per questo servizio'),{key:'x'});
+    fireEvent.keyDown(screen.getByLabelText('Istruzioni per la selezione'),{key:'x'});
     fireEvent.keyDown(screen.getByLabelText('Numero di candidate'),{key:'ArrowRight'});
     expect(document.activeElement).toBe(first);
     expect(calls.some(c=>c.path.includes('/decisions/'))).toBe(false);

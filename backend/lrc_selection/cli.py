@@ -9,6 +9,8 @@ def main():
     parser.add_argument('--show-connection', action='store_true', help='Mostra il token locale per configurare il plugin; non è una chiave API')
     args = parser.parse_args()
     os.umask(0o077)
+    os.environ['HF_HUB_OFFLINE'] = '1'
+    os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
     from .app import create_app, load_connection_token
     if args.show_connection:
         print('Token di connessione locale (non condividere):')

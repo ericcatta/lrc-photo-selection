@@ -159,7 +159,7 @@ Common.run('Prepara servizio', function(context)
         if missing > 0 and Dialogs.confirm('Anteprime mancanti',
             tostring(missing) .. ' fotografie senza anteprima. Annulla per riprovare oppure chiudi l’importazione con le anteprime disponibili.',
             'Concludi importazione', 'Lascia in sospeso') ~= 'ok' then return end
-        Common.request('POST', endpoint .. '/complete', appendTo and {import_id = manifest.id} or '{}')
+        Common.request('POST', endpoint .. '/complete', appendTo and {import_id = manifest.id} or 'null')
     end
     Common.write(pendingFile, { completed = true })
     Common.openBrowser()

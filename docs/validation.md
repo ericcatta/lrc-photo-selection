@@ -52,3 +52,17 @@ Un avviso di deprecazione Starlette riguarda il test client httpx; i test passan
 Layout a pagina unica con provino principale, strumenti laterali, palette neutra chiara e barra superiore scura. Slider quantità sincronizzato con inserimento numerico preciso; slider separato per la dimensione delle anteprime. I dettagli dei criteri restano espandibili e i limiti del motore sono visibili.
 
 Verificati build e 7 test React, compresi sincronizzazione slider/campo, limiti della quantità e assenza di avvio implicito. Acquisito screenshot reale con Chrome headless autorizzato e sei anteprime sintetiche; controllo desktop a 1500 px e mobile a 390 px senza overflow orizzontale. Nessun catalogo o fotografia reale coinvolto.
+
+## Aggiornamento SDK reale — 18 novembre 2026
+
+Il proprietario ha aperto e autorizzato `catalogo-di-prova.lrcat`, cartella cartella del campione autorizzato. Installazione e connessione riuscite; primo import bloccato da `os.rename` assente nel runtime Adobe, corretto con API SDK e test di persistenza. Dettagli e limiti aggiornati in `lightroom-test.md`. Le precedenti note sul blocco `cgWindowNotFound` descrivono i tentativi iniziali: ora il controllo funziona parzialmente, con timeout sui dialoghi. Il flusso reale completo e l’applicazione delle stelle restano da verificare.
+
+## Istruzioni libere e preset — collaudo 18 novembre 2026
+
+- 100 test backend passati nella sandbox; test Apple Vision separato su fixture sintetica passato fuori sandbox (101 complessivi). 18 test frontend e build passati. Browser smoke sintetico desktop/mobile passato senza overflow a 390 px.
+- Qwen3-VL 4B MLX eseguito offline sulle 160 anteprime autorizzate di Campione di prova. Richiesta di benchmark «uccelli», senza criteri Matrimonio, target 7: 70 yes, 62 no, 28 uncertain, circa 463 secondi prima del riordinamento per diversità. Questi sono giudizi del modello, non etichette manuali di verità.
+- Riordinamento dei yes tramite SigLIP: circa 7 secondi. Ispezionato il provino delle 7 proposte: tutte mostrano uccelli, con soggetti a terra e in volo. Non misurati recall globale, qualità comparativa, errori nelle 28 incerte o copertura delle situazioni.
+- Controllo negativo su due anteprime: «Seleziona solo fotografie di elefanti» restituisce zero proposte e avviso di nessuna corrispondenza rilevata; nessun riempimento forzato. Non costituisce una verifica dell’assenza su tutte le 160 foto.
+- Benchmark separato: le impostazioni e decisioni del servizio reale non sono state sostituite, nessuna stella applicata. Per riprodurlo usare scripts/benchmark_instructions.py con un servizio autorizzato. Report completi e immagini restano solo nello spazio dati locale escluso da Git.
+- Il runtime registra hash e versioni per cache/ripresa. I test verificano testo originale integro in valutazioni locali e payload OpenAI, criteri ambigui, preferenze, casi non pertinenti e manuali. Non è una promessa di interpretazione corretta di qualsiasi testo.
+- OpenAI: configurazione chiave/modello e payload implementati e testati senza rete. Keychain nativo non collaudato con chiave reale. Trasporto di analisi, stima/budget/consumi e prova API reale restano da completare; nessuna spesa.

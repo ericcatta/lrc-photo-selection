@@ -262,3 +262,46 @@ def test_append_uploads_only_new_preview_and_show_selects_exact_candidate():
     assert lua.globals().test.uploaded and lua.globals().test.opened
     lua.execute((PLUGIN / 'Show.lua').read_text())
     assert lua.globals().test.selected
+
+
+@pytest.mark.parametrize('accept', [True, False])
+def test_local_connection_discovery_still_requires_dialog_confirmation(accept):
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.globals().accept = accept
+    lua.execute(r'''
+        test = {stored=false,requested=false,opened=false}
+        local token = 'synthetic-local-connection-token'
+        local props
+        local view = {}
+        for _, name in ipairs({'column','static_text','password_field'}) do
+            view[name] = function(_, value) return value end
+        end
+        local sdk = {
+            LrBinding={makePropertyTable=function() props={};return props end},
+            LrView={osFactory=function() return view end,bind=function(x) return x end},
+            LrPathUtils={getStandardFilePath=function(kind) assert(kind=='home');return '/synthetic/home' end,
+                         child=function(parent,child) return parent .. '/' .. child end},
+            LrFileUtils={exists=function(path)
+                assert(path=='/synthetic/home/Library/Application Support/LrC Photo Selection/connection-token');return 'file'
+            end,readFile=function() return token .. '\n' end},
+            LrDialogs={presentModalDialog=function()
+                assert(props.token==token)
+                return accept and 'ok' or 'cancel'
+            end},
+        }
+        function import(name) return assert(sdk[name],name) end
+        package.loaded.Common = {
+            run=function(_,fn) fn({}) end,
+            request=function(method,path,body,media,credential)
+                assert(method=='GET' and path=='/api/services' and credential==token)
+                test.requested=true
+            end,
+            saveToken=function(value) assert(value==token);test.stored=true end,
+            openBrowser=function(value) assert(value==token);test.opened=true end,
+        }
+    ''')
+    lua.execute((PLUGIN / 'Configure.lua').read_text())
+    result = lua.globals().test
+    assert result.stored == accept
+    assert result.requested == accept
+    assert result.opened == accept

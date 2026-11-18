@@ -9,8 +9,19 @@ from lrc_selection.app import create_app
 
 TOKEN = 'synthetic-ui-test-only'
 
+class SyntheticKeychain:
+    def get(self):
+        return None
+    def set(self, value):
+        raise RuntimeError('Fixture: nessuna chiave reale consentita')
+
+def isolate_config(app):
+    if hasattr(app.state, 'openai_config'):
+        app.state.openai_config.keychain = SyntheticKeychain()
+    return app
+
 def make_app(root):
-    app = create_app(root, token=TOKEN)
+    app = isolate_config(create_app(root, token=TOKEN))
     with TestClient(app) as c:
         c.headers['Authorization'] = 'Bearer ' + TOKEN
         photos = [{'id': f'synthetic-{i}', 'uuid': f'synthetic-uuid-{i}', 'local_id': i,
@@ -31,7 +42,7 @@ def make_app(root):
             c.put(f'/api/services/synthetic-ui/photos/synthetic-{i}/preview', content=output.getvalue()).raise_for_status()
         c.post('/api/services/synthetic-ui/complete').raise_for_status()
     # TestClient lifespan shut down executor; create a fresh runtime for the server.
-    return create_app(root, token=TOKEN)
+    return isolate_config(create_app(root, token=TOKEN))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)

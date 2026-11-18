@@ -1,6 +1,6 @@
 # Modelli: verifica preliminare, nessuna prestazione dimostrata
 
-Mac rilevato: M1 Max, 64 GB RAM. Nessun modello è stato provato sulle foto dell'utente.
+Mac rilevato: M1 Max, 64 GB RAM. Qwen3-VL è ora in collaudo locale sul campione autorizzato Campione di prova; vedere gli aggiornamenti sotto.
 
 | Candidato | Evidenza primaria | Decisione iniziale |
 |---|---|---|
@@ -16,3 +16,13 @@ LAION aesthetic predictors non selezionati: checkpoint/licenza/validità da veri
 
 ## Protocollo di benchmark
 Campione autorizzato con annotazioni manuali: cambi di persona, pose/risate, raffiche, momenti unici mossi, volti piccoli/di profilo/coperti, due fotocamere. Separare calibrazione e verifica. Registrare ID del campione senza originali in Git, checksum delle anteprime, modello/revisione/runtime/risoluzione, criteri e soglie. Misurare innanzitutto situazioni perse, composizioni unite erroneamente, immagini uniche escluse e blocchi violati. Poi doppioni, tempo, memoria e costo. Non pubblicare soglie arbitrarie come validate.
+
+## Runtime locale aggiunto il 18 novembre 2026
+
+- Qwen3-VL-4B-Instruct, conversione MLX 4 bit: `mlx-community/Qwen3-VL-4B-Instruct-4bit`, revisione `2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b`, licenza dichiarata Apache-2.0. MLX-VLM 0.3.9; dipendenze effettive in requirements-local-ai-lock.txt. Anteprime temporanee max 448 pixel per inferenza, limite che può perdere soggetti piccoli. Nessuna identificazione nominale.
+- SigLIP 2 base scaricato alla revisione `75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2`; adattatore di confronto opzionale. Non sostituisce l’esecuzione delle istruzioni libere.
+- Download esplicito con scripts/setup_local_model.py; mai durante import/analisi. Caricamento da directory locale, codice remoto disabilitato. Hash dei pesi/config e revisione prompt in cache.
+
+Fonti: https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct ; https://huggingface.co/mlx-community/Qwen3-VL-4B-Instruct-4bit ; https://github.com/Neywa-Labs/mlx-vlm .
+
+La correttezza generale delle istruzioni non è dimostrata da una risposta JSON valida. Servono prove positive, negative, preferenze, conflitti, immagini ambigue e confronto manuale. I risultati dei modelli sono interpretazioni, non fatti importati.

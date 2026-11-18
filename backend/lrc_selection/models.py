@@ -47,11 +47,13 @@ class ImportManifest(StrictModel):
 
 class Settings(StrictModel):
     target: int = Field(ge=1)
-    preset_id: str = 'wedding'
-    preset_version: int = Field(default=1, ge=1)
+    preset_id: str = ''
+    preset_version: int = Field(default=0, ge=0)
     preset_snapshot: dict | None = None
     mode: Literal['local', 'hybrid'] = 'local'
     instructions: str = Field(default='', max_length=10000)
+    subject_query: str = Field(default='', max_length=500)
+    service_criteria: list[str] | None = Field(default=None, max_length=50)
     camera_offsets: dict[str, float] = Field(default_factory=dict)
 
 class SettingsUpdate(StrictModel):
@@ -81,6 +83,8 @@ class Decision(StrictModel):
     confirm_last: bool = False
 
 class PresetInput(StrictModel):
+    instructions: str = Field(default='', max_length=10000)
+    subject_query: str = Field(default='', max_length=500)
     name: str = Field(min_length=1, max_length=100)
     criteria: list[str] = Field(max_length=50)
     version: int | None = None

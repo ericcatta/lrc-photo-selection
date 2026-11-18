@@ -29,12 +29,18 @@ MAX_PREVIEW_BYTES = 24 * 1024 * 1024
 Image.MAX_IMAGE_PIXELS = 50_000_000
 
 def criteria_for(settings):
-    result = [{'text': criterion, 'status': 'unsupported',
-               'reason': 'Criterio disponibile per la revisione manuale; il motore non lo interpreta.'}
-              for criterion in (settings.get('preset_snapshot') or {}).get('criteria', [])]
+    criteria = settings.get('service_criteria')
+    if criteria is None:
+        criteria = (settings.get('preset_snapshot') or {}).get('criteria', [])
+    result = [{'text': criterion, 'status': 'pending',
+               'reason': 'Sarà valutato dal modello visivo durante l’analisi.'}
+              for criterion in criteria]
+    if settings.get('subject_query', '').strip():
+        result.append({'text': settings['subject_query'], 'status': 'pending',
+                       'reason': 'Soggetto richiesto per il confronto visivo locale; verificare il risultato della nuova analisi.'})
     if settings.get('instructions', '').strip():
-        result.append({'text': settings['instructions'], 'status': 'unsupported',
-                       'reason': 'Istruzione salvata per la revisione manuale; il motore iniziale non interpreta testo libero.'})
+        result.append({'text': settings['instructions'], 'status': 'pending',
+                       'reason': 'Il testo originale viene trasmesso integralmente al modello visivo.'})
     return result
 
 def load_connection_token(root: Path):
@@ -73,6 +79,8 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
 
     app = FastAPI(title='LrC Photo Selection', version='0.1.0', lifespan=lifespan)
     app.state.store = store
+    from .openai_config import register_openai_config
+    register_openai_config(app, root)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', 'testserver'])
 
     @app.middleware('http')
@@ -114,7 +122,7 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
 
     @app.post('/api/presets')
     def create_preset(body: PresetInput):
-        preset = {'id': str(uuid.uuid4()), 'name': body.name, 'criteria': body.criteria, 'version': 1}
+        preset = {'id': str(uuid.uuid4()), 'name': body.name, 'criteria': body.criteria, 'subject_query': body.subject_query, 'instructions': body.instructions, 'version': 1}
         with store.transaction() as db:
             db.execute('INSERT INTO presets VALUES(?,?)', (preset['id'], json.dumps(preset)))
         return preset
@@ -128,7 +136,7 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
             old = json.loads(row['body'])
             if old['version'] != body.version:
                 raise HTTPException(409, 'Preset modificato: ricaricare')
-            updated = {'id': pid, 'name': body.name, 'criteria': body.criteria, 'version': old['version'] + 1}
+            updated = {'id': pid, 'name': body.name, 'criteria': body.criteria, 'subject_query': body.subject_query, 'instructions': body.instructions, 'version': old['version'] + 1}
             db.execute('UPDATE presets SET body=? WHERE id=?', (json.dumps(updated), pid))
         return updated
 
@@ -142,9 +150,9 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
                 if service['manifest_sha256'] != digest:
                     raise HTTPException(409, 'ID servizio già usato da un manifest differente')
                 return service
-            preset = json.loads(db.execute("SELECT body FROM presets WHERE id='wedding'").fetchone()['body'])
-            settings = {'target': min(500, len(body.photos)), 'preset_id': preset['id'], 'preset_version': preset['version'],
-                        'preset_snapshot': preset, 'mode': 'local', 'instructions': '', 'camera_offsets': {}}
+            settings = {'target': min(500, len(body.photos)), 'preset_id': '', 'preset_version': 0,
+                        'preset_snapshot': None, 'service_criteria': [], 'subject_query': '',
+                        'mode': 'local', 'instructions': '', 'camera_offsets': {}}
             service = {'id': body.id, 'title': body.title, 'catalog_id': body.catalog_id, 'catalog_label': body.catalog_label,
                        'schema_version': 1, 'manifest_sha256': digest, 'revision': 1, 'status': 'importing',
                        'settings': settings, 'photos': [dict(p.model_dump(), preview_ready=False) for p in body.photos],
@@ -203,6 +211,13 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
         result.pop('decision_history', None)
         result.pop('append_operations', None)
         result['criteria'] = criteria_for(service['settings'])
+        interpreted = (service.get('proposal') or {}).get('instruction_interpretation')
+        if interpreted and not service['proposal'].get('stale'):
+            blocked = interpreted.get('ambiguities', []) + interpreted.get('unsupported', [])
+            for criterion in result['criteria']:
+                criterion['status'] = 'ambiguous' if blocked else 'supported'
+                criterion['reason'] = ('; '.join(blocked) if blocked else
+                    'Richiesta valutata dal modello visivo sulle anteprime; il risultato resta da verificare.')
         result['selected_ids'] = effective_selected(service)
         result['can_undo'] = service.get('decision_cursor', 0) > 0
         result['can_redo'] = service.get('decision_cursor', 0) < len(service.get('decision_history', []))
@@ -334,13 +349,18 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
             if body.settings.target > len(s['photos']):
                 raise HTTPException(422, 'Quantità superiore alle foto importate')
             new = body.settings.model_dump()
-            if (new['preset_id'], new['preset_version']) == (s['settings']['preset_id'], s['settings']['preset_version']):
+            if not new['preset_id']:
+                new['preset_version'] = 0
+                new['preset_snapshot'] = None
+            elif (new['preset_id'], new['preset_version']) == (s['settings']['preset_id'], s['settings']['preset_version']):
                 new['preset_snapshot'] = s['settings']['preset_snapshot']
             else:
                 row = db.execute('SELECT body FROM presets WHERE id=?', (new['preset_id'],)).fetchone()
                 if not row or json.loads(row['body'])['version'] != new['preset_version']:
                     raise HTTPException(409, 'Versione preset non disponibile: ricaricare')
                 new['preset_snapshot'] = json.loads(row['body'])
+            if new['service_criteria'] is None:
+                new['service_criteria'] = (new.get('preset_snapshot') or {}).get('criteria', [])
             s.pop('confirmed_batch_id', None)
             s['settings'] = new
             s['criteria'] = criteria_for(new)
@@ -389,6 +409,28 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
             store.put(db, s)
         return present(s)
 
+    class AcceptShortlist(Revision):
+        confirm_last: bool = False
+
+    @app.post('/api/services/{sid}/accept-shortlist')
+    def accept_shortlist(sid: str, body: AcceptShortlist):
+        with store.transaction() as db:
+            s = store.get(sid, db)
+            store.check_revision(s, body.revision)
+            require_editable(s)
+            proposal = s.get('proposal') or {}
+            if 'shortlist' not in proposal or proposal.get('stale') or not body.confirm_last:
+                raise HTTPException(409, 'Rivedere e confermare una proposta aggiornata prima di applicarla')
+            selected = set(proposal['shortlist'])
+            if not selected:
+                raise HTTPException(409, 'Nessuna corrispondenza proposta: nessuna decisione modificata')
+            changes = {p['id']: {'state': 'candidate' if p['id'] in selected else 'excluded', 'locked': False}
+                       for p in s['photos'] if p['id'] not in s['decisions']}
+            record_decisions(s, changes)
+            s['proposal']['shortlist_accepted'] = True
+            store.put(db, s)
+        return present(s)
+
     @app.post('/api/services/{sid}/replace')
     def replace_candidate(sid: str, body: Replace):
         with store.transaction() as db:
@@ -419,6 +461,8 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
                 raise HTTPException(409, 'Nessuna decisione da annullare o ripristinare')
             apply_decisions(s, history[index]['before' if direction == -1 else 'after'])
             s['decision_cursor'] = cursor + direction
+            if s.get('proposal'):
+                s['proposal']['shortlist_accepted'] = False
             s.pop('confirmed_batch_id', None)
             s['revision'] += 1
             store.put(db, s)
@@ -432,16 +476,59 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
     def redo(sid: str, body: Revision):
         return move_history(sid, body, 1)
 
+    semantic_encoder = None
+    instruction_model = None
+
     def run_analysis(sid: str, start_revision: int):
+        nonlocal semantic_encoder, instruction_model
         try:
             snapshot = store.get(sid)
             proposal = analyze(snapshot)
+            semantic = None
+            model_path, _ = local_components()
+            vlm_path = instruction_component()
+            def progress(completed, total):
+                with store.transaction() as progress_db:
+                    current = store.get(sid, progress_db)
+                    store.check_revision(current, start_revision)
+                    current['job'].update(completed=completed, total=total)
+                    store.put(progress_db, current)
+            if vlm_path:
+                from .vlm import LocalVLM, build_instruction_proposal
+                if instruction_model is None:
+                    instruction_model = LocalVLM(vlm_path)
+                semantic = build_instruction_proposal(store, snapshot, instruction_model, progress)
+                if model_path and semantic['shortlist'] and not semantic.get('blocked'):
+                    from .features import SiglipEncoder
+                    from .semantic import rerank_instruction_shortlist
+                    if semantic_encoder is None:
+                        semantic_encoder = SiglipEncoder(model_path)
+                    semantic = rerank_instruction_shortlist(semantic, snapshot, store, semantic_encoder)
+
+            elif snapshot['settings'].get('instructions', '').strip() or snapshot['settings'].get('service_criteria'):
+                raise ValueError('Modello per istruzioni libere non configurato')
+            elif model_path:
+                from .features import SiglipEncoder
+                from .semantic import build_semantic_proposal
+                if semantic_encoder is None:
+                    semantic_encoder = SiglipEncoder(model_path)
+                semantic = build_semantic_proposal(store, snapshot, semantic_encoder, progress)
+            elif snapshot['settings'].get('subject_query', '').strip():
+                raise ValueError('Modello semantico locale non configurato')
+            if semantic is not None:
+                proposal.update({k: semantic[k] for k in ('shortlist', 'shortlist_reasons', 'query_scores')})
+                proposal['semantic'] = {k: semantic[k] for k in ('model', 'query', 'method')}
+                proposal['warnings'] = semantic['warnings']
+                if 'instruction_interpretation' in semantic:
+                    proposal['instruction_interpretation'] = semantic['instruction_interpretation']
             with store.transaction() as db:
                 s = store.get(sid, db)
                 if s['revision'] != start_revision:
                     s['job'] = {'status': 'interrupted', 'completed': 0, 'total': len(s['photos']), 'error': 'Decisioni o impostazioni cambiate durante l’analisi; riavviare.'}
                 else:
                     s['proposal'] = proposal
+                    if semantic:
+                        s['interpretations'] = semantic['interpretations']
                     s.pop('requires_analysis', None)
                     s['job'] = {'status': 'completed', 'completed': len(s['photos']), 'total': len(s['photos']), 'error': None}
                 s['status'] = 'ready'
@@ -473,14 +560,18 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
 
     def local_components():
         vision_path = Path(os.environ.get('LRC_VISION_TOOL', Path(__file__).resolve().parents[2] / '.build/lrc-face-detection'))
-        siglip_path = os.environ.get('LRC_SIGLIP_DIR')
-        return (Path(siglip_path) if siglip_path and Path(siglip_path).is_dir() else None,
+        siglip_path = os.environ.get('LRC_SIGLIP_DIR', str(root / 'models' / 'siglip2-base-patch16-224'))
+        return (Path(siglip_path) if siglip_path and (Path(siglip_path) / 'model.safetensors').is_file() else None,
                 vision_path if vision_path.is_file() and os.access(vision_path, os.X_OK) else None)
+
+    def instruction_component():
+        path = Path(os.environ.get('LRC_VLM_DIR', str(root / 'models' / 'Qwen3-VL-4B-Instruct-4bit')))
+        return path if (path / 'config.json').is_file() and list(path.glob('*.safetensors')) else None
 
     @app.get('/api/capabilities')
     def capabilities():
         siglip_path, vision_path = local_components()
-        return {'features': bool(siglip_path or vision_path), 'siglip': bool(siglip_path), 'faces': bool(vision_path)}
+        return {'features': bool(siglip_path or vision_path), 'siglip': bool(siglip_path), 'semantic': bool(siglip_path or instruction_component()), 'instructions': bool(instruction_component()), 'faces': bool(vision_path)}
 
     def run_features(sid, revision, siglip_path, vision_path):
         try:

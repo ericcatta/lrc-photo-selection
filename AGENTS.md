@@ -29,3 +29,12 @@ Use Astra Medium as orchestrator when available. Personal agents: planner gpt-6.
 - Servizi e archivio web restano locali; aggiunte solo nello stesso catalogo, senza aggiornare baseline o decisioni delle foto già importate.
 - Piani stelle confermati esplicitamente nella web app e nuovamente nel plugin. Riprendere il piano attivo, non un piano più recente arbitrario.
 - I test browser usano solo fixture sintetiche; Chrome headless è stato autorizzato dal proprietario. Il controllo grafico continua a essere bloccato da cgWindowNotFound.
+
+## Campione autorizzato per il collaudo reale
+- Il 18 novembre 2026 il proprietario ha aperto personalmente `catalogo-di-prova.lrcat` e autorizzato il test sulla cartella selezionata mostrata nello screenshot. Questa autorizzazione amplia quella precedente per JPEG; non autorizza altre cartelle o il catalogo principale non autorizzato.
+- Installazione del plugin locale e collegamento al backend con token nel portachiavi esplicitamente confermati. Stelle sempre subordinate a riepilogo e verifica XMP.
+
+## Istruzioni e preset aggiornati
+- Selezionare un preset compila automaticamente criteri e istruzioni, sempre modificabili nel servizio; aggiornamento e salvataggio come nuovo preset espliciti, snapshot precedenti immutabili. Nessun preset obbligatorio.
+- Testo originale conservato integralmente, anche per le API; contesto tecnico separato, mai sostituzione con una riscrittura. Nessuna conferma obbligatoria dell’interpretazione: segnalare solo ambiguità, conflitti, assenza di corrispondenze o limiti effettivi.
+- Qwen3-VL locale valutato sul campione autorizzato; shortlist rivedibile distinta dalla copertura conservativa. Accettazione locale annullabile e piano stelle separato. Non presentare i risultati dei modelli come fatti o correttezza universale.

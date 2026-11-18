@@ -99,7 +99,7 @@ h2 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
 .target-heading input { width: 68px; text-align: right; font-variant-numeric: tabular-nums; }
 .range-ends { display: flex; justify-content: space-between; color: #898e82; font-size: 10px; margin: 2px 0 9px; }
 .hint { font-size: 11px; color: #777d70; margin: 9px 0 0; line-height: 1.5; }
-.preset-actions { display: flex; justify-content: space-between; margin: 4px 0 13px; }
+.preset-actions { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: space-between; margin: 4px 0 13px; }
 button.text-button { border: 0; background: none; padding: 4px 0; min-height: 24px; color: #5e6b74; font-size: 11px; }
 button.text-button:hover:not(:disabled) { background: none; color: #1f3545; text-decoration: underline; }
 summary { cursor: pointer; font-size: 12px; }
@@ -160,3 +160,14 @@ dialog form label { margin-bottom: 15px; }
 .face-crops { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .face-crop { width: 76px; overflow: hidden; position: relative; }
 .face-crop img { position: absolute; max-width: none; }
+
+.openai-settings { padding: 8px 24px; border-bottom: 1px solid var(--line, #d0d0cb); background: var(--panel, #f5f5f2); }
+.openai-settings form { max-width: 580px; padding: 12px 0; display: grid; gap: 12px; }
+.openai-settings form h2, .openai-settings form p { margin: 0; }
+
+@media (max-width: 720px) {
+  .config .tool-section:has(textarea) { grid-column: 1/-1; }
+  .preset-actions button { white-space: normal; text-align: left; }
+  .openai-settings { padding: 8px 16px; }
+  .openai-settings form { min-width: 0; }
+}

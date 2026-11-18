@@ -132,9 +132,9 @@ def test_preset_snapshot_and_unsupported_instructions(client):
     assert r.status_code == 200
     s = configure(client, s, instructions='Scegli solo foto con lo zio')
     assert s['settings']['preset_snapshot'] == old
-    assert s['criteria'][-1]['status'] == 'unsupported'
+    assert s['criteria'][-1]['status'] == 'pending'
     assert client.put('/api/presets/wedding', json={'name': 'stale', 'criteria': [], 'version': 1}).status_code == 409
-    s = configure(client, s, preset_version=2)
+    s = configure(client, s, preset_id='wedding', preset_version=2)
     assert s['settings']['preset_snapshot']['name'] == 'Changed'
 
 def test_rating_plan_preserves_existing_and_missing_edit_time(client):
@@ -344,7 +344,7 @@ def test_replace_changes_representative_and_history_is_atomic(client):
 
 def test_custom_criteria_never_claim_text_understanding(client):
     from lrc_selection.app import criteria_for
-    assert criteria_for({'preset_snapshot': {'criteria': ['Solo foto dello sposo']}})[0]['status'] == 'unsupported'
+    assert criteria_for({'preset_snapshot': {'criteria': ['Solo foto dello sposo']}})[0]['status'] == 'pending'
 
 
 def test_history_survives_restart_and_new_branch_drops_redo(tmp_path):
@@ -381,3 +381,22 @@ def test_settings_clear_confirmed_plan_and_legacy_manifest_digest(client):
     assert client.get('/api/services/test-service/rating-plan/latest').status_code == 404
     with client.app.state.store.connect() as db:
         assert db.execute('PRAGMA user_version').fetchone()[0] == 1
+
+
+def test_optional_preset_copy_can_be_edited_removed_and_reloaded(client):
+    s = imported(client)
+    assert s['settings']['preset_id'] == ''
+    assert s['settings']['preset_snapshot'] is None
+    p = client.post('/api/presets', json={'name': 'Natura', 'criteria': ['Conservare varianti'], 'subject_query': 'uccelli'}).json()
+    s = configure(client, s, preset_id=p['id'], preset_version=1, service_criteria=p['criteria'], subject_query=p['subject_query'])
+    other = imported(client, manifest('other-preset-test'))
+    s = configure(client, s, service_criteria=['Varianti del volo'], subject_query='uccelli in volo')
+    assert detail(client)['settings']['service_criteria'] == ['Varianti del volo']
+    assert detail(client)['settings']['subject_query'] == 'uccelli in volo'
+    assert next(x for x in client.get('/api/presets').json() if x['id'] == p['id'])['criteria'] == ['Conservare varianti']
+    assert detail(client, other['id'])['settings']['service_criteria'] == []
+    client.put('/api/presets/'+p['id'], json={'name': 'Natura', 'criteria': ['Nuove'], 'subject_query': 'animali', 'version': 1})
+    assert detail(client)['settings']['preset_snapshot']['version'] == 1
+    s = configure(client, s, preset_id='', service_criteria=[], subject_query='')
+    assert s['settings']['preset_snapshot'] is None
+    assert s['settings']['preset_version'] == 0

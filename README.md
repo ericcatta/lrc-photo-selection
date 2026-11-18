@@ -91,3 +91,11 @@ Risultati e limiti del collaudo: [verifica 0.1.0](docs/validation.md).
 `node scripts/browser_smoke.mjs` verifica il flusso con Chrome headless, backend su porta 18765, dati sintetici e ricevute SDK simulate. Richiede Chrome installato e asset web compilati; non apre Lightroom. `scripts/benchmark_scale.py` misura il backend su 1.000 e 5.000 elementi sintetici.
 
 Vedere [audit e piano](docs/audit-plan.md). Le raccolte Classic locali facoltative restano una fase successiva al collaudo SDK; questa versione non crea o modifica raccolte. Annulla/ripristina riguarda le decisioni manuali, non le stelle applicate o le analisi già eseguite.
+
+### Modello locale per istruzioni libere
+
+Sul Mac Apple Silicon: installare `.venv/bin/pip install -e '.[local-instructions]'`, poi eseguire `.venv/bin/python scripts/setup_local_model.py`. È un download esplicito di pesi, senza inviare foto; richiede diversi GB di spazio. Il backend rileva il modello nello spazio dati dell’app. Per riprodurre il runtime del collaudo usare requirements-local-ai-lock.txt.
+
+Scegli un preset per copiare i suoi criteri e modificarli nel servizio, oppure parti senza preset e scrivi direttamente le istruzioni. L’analisi restituisce una proposta da rivedere. Confermarla modifica soltanto la selezione locale; le stelle richiedono ancora il piano e la conferma separata in Lightroom.
+
+La sezione OpenAI salva chiave nel portachiavi e nome modello; il percorso di chiamata cloud con stima/budget non è ancora abilitato. Non invia automaticamente foto.

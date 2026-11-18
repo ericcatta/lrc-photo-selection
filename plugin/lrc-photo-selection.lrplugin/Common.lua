@@ -14,6 +14,7 @@ local root = Path.child(Path.getStandardFilePath('appData'), 'lrc-photo-selectio
 local url = 'http://127.0.0.1:8765'
 local tokenKey = 'loopback-token'
 local running = false
+local storagePaths = {}
 
 function M.run(name, action)
     Context.postAsyncTaskWithContext(name, function(context)
@@ -47,24 +48,61 @@ end
 function M.file(kind, key)
     local dir = Path.child(root, M.key(kind))
     assert(File.createAllDirectories(dir), 'Impossibile creare lo spazio dati del plugin.')
-    return Path.child(dir, M.key(key):gsub(':', '_') .. '.json')
+    local path = Path.child(dir, M.key(key):gsub(':', '_') .. '.json')
+    storagePaths[path] = true
+    return path
+end
+
+local function assertStoragePath(path)
+    assert(storagePaths[path], 'Percorso esterno allo spazio dati del plugin.')
+end
+
+local function existsFile(path)
+    local kind = File.exists(path)
+    assert(not kind or kind == 'file', 'File di stato non valido.')
+    return kind
 end
 
 function M.read(path)
-    local exists = File.exists(path)
-    if not exists then return nil end
-    assert(exists == 'file', 'File di stato non valido.')
-    return JSON.decode(assert(File.readFile(path), 'Impossibile leggere lo stato del plugin.'))
+    assertStoragePath(path)
+    -- A crash between the two moves leaves the previous committed value intact.
+    local source = existsFile(path) and path or
+        (existsFile(path .. '.previous') and path .. '.previous')
+    if not source then
+        assert(not existsFile(path .. '.pending') and not existsFile(path .. '.tmp'), 'Stato locale incompleto. Operazione interrotta.')
+        return nil
+    end
+    local value = JSON.decode(assert(File.readFile(source), 'Impossibile leggere lo stato del plugin.'))
+    assert(type(value) == 'table', 'Contenuto dello stato locale non valido.')
+    return value
 end
 
 function M.write(path, value)
+    assertStoragePath(path)
     local serialized = JSON.encode(value)
-    local temporary = path .. '.tmp'
-    local handle = assert(io.open(temporary, 'wb'), 'Impossibile aprire il file di stato del plugin.')
+    local pending, previous = path .. '.pending', path .. '.previous'
+    local function remove(file)
+        if existsFile(file) then
+            assert(File.delete(file), 'Impossibile aggiornare lo stato locale.')
+        end
+    end
+    -- Never remove the last committed copy, including after an interrupted move.
+    if not existsFile(path) and existsFile(previous) then
+        assert(File.move(previous, path), 'Impossibile recuperare lo stato locale.')
+    end
+    -- An orphan first-write pending file requires investigation, not replacement.
+    assert(existsFile(path) or (not existsFile(pending) and not existsFile(path .. '.tmp')), 'Stato locale incompleto. Operazione interrotta.')
+    remove(pending)
+    local handle = assert(io.open(pending, 'wb'), 'Impossibile aprire il file di stato del plugin.')
     local wrote = handle:write(serialized)
     local flushed = handle:flush()
     local closed = handle:close()
-    assert(wrote and flushed and closed and os.rename(temporary, path), 'Impossibile registrare lo stato locale. Operazione interrotta.')
+    assert(wrote and flushed and closed, 'Impossibile registrare lo stato locale. Operazione interrotta.')
+    if existsFile(path) then
+        remove(previous)
+        assert(File.move(path, previous), 'Impossibile conservare lo stato locale precedente.')
+    end
+    assert(File.move(pending, path), 'Impossibile registrare lo stato locale. Operazione interrotta.')
 end
 
 local function digest(value)

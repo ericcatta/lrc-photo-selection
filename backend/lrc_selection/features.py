@@ -19,24 +19,24 @@ class SiglipEncoder:
             raise ValueError('Indicare una directory locale di pesi già scaricati e verificati')
         # Imports are lazy so the complete manual/local baseline needs no ML stack.
         import torch
-        from transformers import AutoModel, AutoProcessor
+        from transformers import AutoModel, AutoProcessor, __version__ as transformers_version
         self.torch = torch
         self.device = 'mps' if torch.backends.mps.is_available() else 'cpu'
         self.processor = AutoProcessor.from_pretrained(str(model_dir), local_files_only=True, trust_remote_code=False)
         self.model = AutoModel.from_pretrained(str(model_dir), local_files_only=True, trust_remote_code=False).to(self.device).eval()
         config = self.model.config
-        if getattr(config, 'model_type', '') != 'siglip2':
+        if getattr(config, 'model_type', '') not in {'siglip', 'siglip2'}:
             raise ValueError('Questo adattatore accetta soltanto checkpoint SigLIP 2')
         hashes = {}
         for path in sorted(model_dir.rglob('*')):
-            if path.is_file() and path.suffix in ('.json', '.safetensors'):
+            if path.is_file() and path.suffix in ('.json', '.safetensors', '.model', '.txt'):
                 digest = hashlib.sha256()
                 with path.open('rb') as stream:
                     for chunk in iter(lambda: stream.read(1024 * 1024), b''):
                         digest.update(chunk)
                 hashes[str(path.relative_to(model_dir))] = digest.hexdigest()
         self.identity = {'adapter': 'siglip2-v1', 'files': hashes, 'device': self.device,
-                         'torch': torch.__version__}
+                         'torch': torch.__version__, 'transformers': transformers_version}
 
     def encode(self, path):
         from PIL import Image
@@ -45,6 +45,16 @@ class SiglipEncoder:
         inputs = self.processor(images=image, return_tensors='pt').to(self.device)
         with self.torch.inference_mode():
             vector = self.model.get_image_features(**inputs)
+            vector = getattr(vector, 'pooler_output', vector)
+            vector = vector / vector.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+        return vector[0].float().cpu().tolist()
+
+    def encode_text(self, text):
+        inputs = self.processor(text=[text], padding='max_length', truncation=True,
+                                return_tensors='pt').to(self.device)
+        with self.torch.inference_mode():
+            vector = self.model.get_text_features(**inputs)
+            vector = getattr(vector, 'pooler_output', vector)
             vector = vector / vector.norm(dim=-1, keepdim=True).clamp(min=1e-12)
         return vector[0].float().cpu().tolist()
 
