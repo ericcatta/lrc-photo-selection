@@ -94,7 +94,7 @@ class OpenAIConfig:
         except RuntimeError:
             has_key, error = False, 'Portachiavi non disponibile: nessuna chiave verificata.'
         return {'configured': has_key and bool(model), 'key_configured': has_key, 'model': model,
-                'storage': 'macOS Keychain', 'analysis_enabled': False, 'error': error}
+                'storage': 'macOS Keychain', 'analysis_enabled': True, 'error': error}
 
     def save(self, body):
         if body.api_key is not None:
@@ -103,6 +103,8 @@ class OpenAIConfig:
                 raise HTTPException(422, 'Chiave API non valida.')
             try:
                 self.secrets().set(key)
+                # Availability belongs to the credential/account last checked.
+                (self.path.parent / 'openai-available-models.json').unlink(missing_ok=True)
             except RuntimeError:
                 raise HTTPException(503, 'Impossibile salvare la chiave nel portachiavi.') from None
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

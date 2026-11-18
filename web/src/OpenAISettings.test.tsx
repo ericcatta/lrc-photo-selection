@@ -9,18 +9,65 @@ it('keeps the key ephemeral and saves configuration without starting analysis',a
   vi.stubGlobal('fetch',vi.fn(async(url:string,init?:RequestInit)=>{
     const body=init?.body?JSON.parse(String(init.body)):undefined;
     calls.push({url,body});
+    if(url==='/api/openai/models')return new Response(JSON.stringify({models:[{id:'gpt-5.4-mini-2026-03-17',label:'GPT-5.4 mini',input_per_million:.75,output_per_million:4.5,available:null}],checked_at:null}),{headers:{'Content-Type':'application/json'}});
     return new Response(JSON.stringify({configured:Boolean(body),key_configured:Boolean(body),model:body?.model??'',analysis_enabled:false}),{headers:{'Content-Type':'application/json'}});
   }));
   render(<OpenAISettings/>);
   expect(calls).toHaveLength(0);
   fireEvent.click(screen.getByRole('button',{name:'Configurazione OpenAI'}));
   await waitFor(()=>expect((screen.getByLabelText('Modello API') as HTMLInputElement).disabled).toBe(false));
-  fireEvent.change(screen.getByLabelText('Modello API'),{target:{value:'synthetic-model'}});
+  fireEvent.change(screen.getByLabelText('Modello API'),{target:{value:'gpt-5.4-mini-2026-03-17'}});
   fireEvent.change(screen.getByLabelText('Chiave API'),{target:{value:'synthetic-api-key'}});
   fireEvent.click(screen.getByRole('button',{name:'Salva configurazione'}));
   await screen.findByRole('status');
   expect((screen.getByLabelText('Chiave API') as HTMLInputElement).value).toBe('');
-  expect(calls[1]).toEqual({url:'/api/openai/config',body:{model:'synthetic-model',api_key:'synthetic-api-key'}});
-  expect(calls.every(c=>c.url==='/api/openai/config')).toBe(true);
+  expect(calls.find(call=>call.body)).toEqual({url:'/api/openai/config',body:{model:'gpt-5.4-mini-2026-03-17',api_key:'synthetic-api-key'}});
+  expect(calls.every(c=>['/api/openai/config','/api/openai/models'].includes(c.url))).toBe(true);
   expect(localStorage.length).toBe(0);
+});
+
+it('checks model availability only on explicit click and keeps unavailable models disabled',async()=>{
+  const calls:string[]=[];
+  vi.stubGlobal('fetch',vi.fn(async(url:string)=>{
+    calls.push(url);
+    const data=url==='/api/openai/config'?{model:'gpt-5.4-mini',key_configured:true}: {models:[{id:'gpt-5.4-mini',label:'Mini',input_per_million:.75,output_per_million:4.5,available:url.endsWith('/refresh')?false:null}],checked_at:null};
+    return new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json'}});
+  }));
+  render(<OpenAISettings/>);
+  fireEvent.click(screen.getByRole('button',{name:'Configurazione OpenAI'}));
+  await waitFor(()=>expect((screen.getByRole('button',{name:'Verifica modelli disponibili'}) as HTMLButtonElement).disabled).toBe(false));
+  expect(calls).not.toContain('/api/openai/models/refresh');
+  fireEvent.click(screen.getByRole('button',{name:'Verifica modelli disponibili'}));
+  await screen.findByRole('option',{name:'Mini · non disponibile'});
+  expect((screen.getByRole('option',{name:'Mini · non disponibile'}) as HTMLOptionElement).disabled).toBe(true);
+  expect((screen.getByRole('button',{name:'Salva configurazione'}) as HTMLButtonElement).disabled).toBe(true);
+});
+
+it('shows discovered new models without enabling unverified pricing',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async(url:string)=>new Response(JSON.stringify(url.endsWith('/config')?{model:'',key_configured:true}:{models:[{id:'future-model',label:'future-model',supported:false,available:true,input_per_million:null,output_per_million:null}],checked_at:'2026-11-18',stale:false}),{headers:{'Content-Type':'application/json'}})));
+  render(<OpenAISettings/>);
+  fireEvent.click(screen.getByRole('button',{name:'Configurazione OpenAI'}));
+  const option=await screen.findByRole('option',{name:'future-model'});
+  expect((option as HTMLOptionElement).disabled).toBe(true);
+  expect(screen.getByRole('group',{name:'Altri modelli · compatibilità e tariffa da verificare'})).toBeTruthy();
+});
+it('allows replacing a key despite stale unavailability and reloads the local model list',async()=>{
+  const calls:{url:string;method:string}[]=[];
+  let replaced=false;
+  vi.stubGlobal('fetch',vi.fn(async(url:string,init?:RequestInit)=>{
+    const method=init?.method??'GET';calls.push({url,method});
+    if(method==='PUT')replaced=true;
+    const data=url==='/api/openai/config'?{model:'gpt-5.4-mini',key_configured:true,configured:true}:{models:[{id:'gpt-5.4-mini',label:'Mini',supported:true,available:replaced?null:false,input_per_million:.75,output_per_million:4.5}],checked_at:null};
+    return new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json'}});
+  }));
+  render(<OpenAISettings/>);
+  fireEvent.click(screen.getByRole('button',{name:'Configurazione OpenAI'}));
+  await screen.findByRole('option',{name:'Mini · non disponibile'});
+  expect((screen.getByRole('button',{name:'Salva configurazione'}) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText('Chiave API'),{target:{value:'new-synthetic-key'}});
+  fireEvent.click(screen.getByRole('button',{name:'Salva configurazione'}));
+  await screen.findByRole('status');
+  expect((screen.getByLabelText('Chiave API') as HTMLInputElement).value).toBe('');
+  expect(calls.filter(c=>c.url==='/api/openai/models')).toHaveLength(2);
+  expect(calls.some(c=>c.url.endsWith('/refresh'))).toBe(false);
 });

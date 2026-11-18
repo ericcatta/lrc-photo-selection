@@ -71,6 +71,7 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
             raise RuntimeError('Un backend usa già questa directory dati')
         try:
             store.recover_jobs()
+            app.state.openai_analysis.recover()
             yield
         finally:
             executor.shutdown(wait=True, cancel_futures=True)
@@ -81,6 +82,8 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
     app.state.store = store
     from .openai_config import register_openai_config
     register_openai_config(app, root)
+    from .model_registry import register_model_catalog
+    register_model_catalog(app, root)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', 'testserver'])
 
     @app.middleware('http')
@@ -548,8 +551,8 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
             s = store.get(sid, db)
             store.check_revision(s, body.revision)
             require_editable(s)
-            if s['settings']['mode'] != 'local':
-                raise HTTPException(409, 'Modalità ibrida non abilitata: occorrono campione, modello e budget autorizzati.')
+            # This endpoint is always local, including the first pass of hybrid mode.
+            # Cloud requests require a separate immutable estimate and confirmation.
             s.pop('confirmed_batch_id', None)
             s['status'] = 'analyzing'
             s['job'] = {'status': 'running', 'completed': 0, 'total': len(s['photos']), 'error': None}
@@ -704,6 +707,9 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
             s['revision'] += 1
             store.put(db, s)
         return {'ok': True}
+
+    from .openai_analysis import register_openai_analysis
+    register_openai_analysis(app, store, executor, present, require_editable)
 
     assets = web_dir or Path(__file__).resolve().parents[2] / 'web/dist'
     if assets.is_dir():

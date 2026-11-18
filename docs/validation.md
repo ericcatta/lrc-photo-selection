@@ -66,3 +66,11 @@ Il proprietario ha aperto e autorizzato `catalogo-di-prova.lrcat`, cartella cart
 - Benchmark separato: le impostazioni e decisioni del servizio reale non sono state sostituite, nessuna stella applicata. Per riprodurlo usare scripts/benchmark_instructions.py con un servizio autorizzato. Report completi e immagini restano solo nello spazio dati locale escluso da Git.
 - Il runtime registra hash e versioni per cache/ripresa. I test verificano testo originale integro in valutazioni locali e payload OpenAI, criteri ambigui, preferenze, casi non pertinenti e manuali. Non è una promessa di interpretazione corretta di qualsiasi testo.
 - OpenAI: configurazione chiave/modello e payload implementati e testati senza rete. Keychain nativo non collaudato con chiave reale. Trasporto di analisi, stima/budget/consumi e prova API reale restano da completare; nessuna spesa.
+
+## Flusso OpenAI — aggiornamento 18 novembre 2026
+
+Trasporto Responses, stima, budget persistente per servizio, conferma del campione, testo originale, cancellazione/ripresa, cache e ricevute implementati. Le precedenti note «non abilitato» descrivono lo stato iniziale e sono superate. 118 test backend passati (escluso il test Apple Vision già verificato nella sessione precedente). Quindici test specifici coprono il runner API, tre il catalogo modelli. Tutti i trasporti OpenAI sono simulati: nessuna foto reale inviata e nessuna spesa API effettuata. Keychain e disponibilità dei modelli con una chiave reale restano da collaudare.
+
+Frontend: 26 test passati e build produzione riuscita. Verifica sul backend riavviato: catalogo locale modelli disponibile, servizio reale senza job API, consumi e riserve a zero. Nessuna richiesta di aggiornamento modelli eseguita sull’account reale.
+
+Smoke browser API completo (`scripts/api_browser_smoke.mjs`): stima senza chiamate, conferma obbligatoria, testo Unicode/spazi identico, una chiamata simulata per due anteprime identiche tramite cache, consumo registrato e riserva rilasciata. Screenshot desktop prima/dopo e mobile verificati, nessun overflow a 390 px. Fixture separata, chiave falsa e trasporto sostituito prima dell’avvio del server; nessuna rete OpenAI.

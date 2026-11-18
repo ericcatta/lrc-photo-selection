@@ -27,7 +27,7 @@ def test_config_keeps_secret_only_in_keychain_and_never_returns_it(tmp_path):
         assert response.status_code == 200
         assert secret not in response.text
         assert response.json()['configured'] is True
-        assert response.json()['analysis_enabled'] is False
+        assert response.json()['analysis_enabled'] is True
         assert keychain.key == secret
         assert secret not in (tmp_path/'openai-config.json').read_text()
         assert json.loads((tmp_path/'openai-config.json').read_text()) == {'schema_version': 1, 'model': 'synthetic-model'}

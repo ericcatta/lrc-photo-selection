@@ -3,6 +3,7 @@ import { useEffect, useRef, useCallback, useState, type CSSProperties } from 're
 import { api, ApiError, photoPath, servicePath, type Plan, type Face, type Photo, type State, type Service, type Summary, type Settings, type Preset } from './api';
 import './style.css';
 import { OpenAISettings } from './OpenAISettings';
+import { APIReview } from './APIReview';
 
 const labels: Record<State,string> = {candidate:'Candidata',preferred:'Preferita',alternative:'Alternativa',excluded:'Esclusa',review:'Da rivedere'};
 const states = Object.keys(labels) as State[];
@@ -65,7 +66,7 @@ export function App() {
         </label>
         <button onClick={refresh} disabled={busy}>Aggiorna</button>
       </div>}
-      <span className="local-status">Solo locale</span>
+      <span className="local-status">{service?.settings.mode==='hybrid'?'Ibrida · invio da confermare':'Solo locale'}</span>
     </header>
     <main>
       {!login&&<OpenAISettings/>}
@@ -311,7 +312,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
               <div className="preset-actions"><button className="text-button" type="button" onClick={()=>editPreset(null)}>Salva come nuovo preset</button>{offer&&<button className="text-button" type="button" onClick={()=>editPreset(offer)}>Aggiorna preset</button>}</div>
               <p className="hint">{snapshot ? 'Base applicata: '+snapshot.name+' · v'+snapshot.version+'. I criteri qui sotto sono una copia modificabile per questo servizio.' : 'Nessun preset applicato. Puoi configurare direttamente questo servizio.'}</p>
               {snapshot&&<button className="text-button" type="button" onClick={()=>{setPresetChoice('');setDraft({...draft,preset_id:'',preset_version:0,preset_snapshot:null,service_criteria:[],subject_query:'',instructions:''});}}>Rimuovi preset e criteri</button>}
-              <label>Modalità<select value={draft.mode} onChange={e=>setDraft({...draft,mode:e.target.value as Settings['mode']})}><option value="local">Solo locale</option><option value="hybrid" disabled>Ibrida (non disponibile)</option></select></label>
+              <label>Modalità<select value={draft.mode} onChange={e=>setDraft({...draft,mode:e.target.value as Settings['mode']})}><option value="local">Solo locale</option><option value="hybrid">Ibrida: locale + OpenAI</option></select></label>
             </div>
             <section className="tool-section">
               <h2>Istruzioni e criteri del servizio</h2>
@@ -322,9 +323,10 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
               <details><summary>Ricerca per soggetto facoltativa</summary><label>Soggetto da privilegiare<input value={draft.subject_query??''} placeholder="Es. uccelli" maxLength={500} onChange={e=>setDraft({...draft,subject_query:e.target.value})}/></label><p className="hint">Aiuta il confronto visivo; i criteri complessi restano nelle istruzioni sopra.</p></details>
             </section>
             {cameras.length>0&&<details className="tool-section disclosure"><summary>Sincronizzazione fotocamere</summary><p className="hint">Offset in secondi applicati all’ordine cronologico nella web app.</p><div className="camera-fields">{cameras.map(c=><label key={c}>{c}<input type="number" step="1" value={draft.camera_offsets[c]??0} onChange={e=>setDraft({...draft,camera_offsets:{...draft.camera_offsets,[c]:Number(e.target.value)}})}/></label>)}</div></details>}
-            <div className="tool-section run-section"><div className="run-actions"><button type="button" disabled={!draftChanged||!valid} onClick={()=>void save(false)}>Salva criteri</button><button className="primary" disabled={!valid||draft.mode!=='local'||s.status!=='ready'||(!instructionsAvailable&&Boolean(draft.instructions.trim()||serviceCriteria.length))}>Avvia selezione</button></div><p className="hint">La proposta si rivede nel provino. Le decisioni manuali e le foto conservate per copertura restano visibili.</p></div>
+            <div className="tool-section run-section"><div className="run-actions"><button type="button" disabled={!draftChanged||!valid} onClick={()=>void save(false)}>Salva criteri</button><button className="primary" disabled={!valid||s.status!=='ready'||(!instructionsAvailable&&Boolean(draft.instructions.trim()||serviceCriteria.length))}>{draft.mode==='hybrid'?'Avvia selezione locale':'Avvia selezione'}</button></div><p className="hint">La proposta si rivede nel provino. Le decisioni manuali e le foto conservate per copertura restano visibili.</p></div>
           </fieldset>
         </form>
+        {draft.mode==='hybrid'&&<APIReview service={s} dirty={draftChanged} disabled={busy} update={update}/>}
         {s.criteria.length>0&&<details className="tool-section disclosure criteria-status"><summary>Stato dei criteri<span className="detail-tag">{s.criteria.filter(c=>c.status!=='supported').length} da verificare</span></summary><ul>{s.criteria.map((c,i)=><li key={i}><strong>{c.text}</strong><span className="criterion-status">{({partial:'Parzialmente supportato',unsupported:'Non applicato',supported:'Supportato',pending:'Da analizzare',ambiguous:'Ambiguo'} as Record<string,string>)[c.status]??c.status}</span><p>{c.reason}</p></li>)}</ul></details>}
         {features&&<section className="tool-section"><button disabled={busy} onClick={()=>void action(async()=>update(await api<Service>(path+'/features','POST',{revision:s.revision})))}>Analizza dettagli locali</button></section>}
         {s.job&&<section className="tool-section job-status" aria-live="polite"><h2>Analisi locale</h2><p>{({running:'In corso',queued:'In coda',completed:'Completata',interrupted:'Interrotta',failed:'Non riuscita'} as Record<string,string>)[s.job.status]??s.job.status} · {s.job.completed} / {s.job.total}</p>{s.job.status==='running'&&<progress value={s.job.completed} max={s.job.total||1}/>} {s.job.error&&<p className="warning">{s.job.error}</p>}</section>}

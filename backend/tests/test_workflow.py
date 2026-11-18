@@ -181,8 +181,13 @@ def test_quantity_validation_and_no_implicit_cloud(client):
     for target in [0, 5]:
         assert client.put('/api/services/test-service/settings', json={'revision': s['revision'], 'settings': s['settings'] | {'target': target}}).status_code == 422
     s = configure(client, s, mode='hybrid')
-    assert client.post('/api/services/test-service/analyze', json={'revision': s['revision']}).status_code == 409
-    assert detail(client)['job'] is None
+    class NoKeyAccess:
+        def get(self):
+            raise AssertionError('Local analysis must not access an API credential')
+    client.app.state.openai_config.keychain = NoKeyAccess()
+    result = run(client, s)
+    assert result['job']['status'] == 'completed'
+    assert client.get('/api/services/test-service/api-status').json()['job'] is None
 
 def test_restart_recovers_job_and_decisions(tmp_path):
     app = create_app(tmp_path, token=TOKEN)
