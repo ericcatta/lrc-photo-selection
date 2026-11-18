@@ -1,0 +1,131 @@
+{
+  "synthetic_only": true,
+  "photo_quality_validated": false,
+  "model_directory": "Qwen3.5-9B-MLX-4bit",
+  "runtime": "0.4.3",
+  "load_seconds": 7.17175829099142,
+  "peak_memory_bytes": 7696835682,
+  "seconds": 93.40303020799183,
+  "checks": [
+    {
+      "kind": "interpretation",
+      "instructions": "uccelli, ritratti, landscape",
+      "seconds": 22.478464749990962,
+      "result": {
+        "summary": "La richiesta include tre categorie distinte: uccelli, ritratti e paesaggi.",
+        "criteria": [],
+        "ambiguities": [
+          "La richiesta non specifica se i ritratti devono essere di persone o animali; per convenzione si assumono persone.",
+          "Non è chiaro se la presenza di uccelli e paesaggi escluda la possibilità di ritratti o se tutti e tre i soggetti devono essere presenti nella stessa immagine."
+        ],
+        "unsupported": [
+          "L'identità certa di soggetti specifici non può essere verificata dalle anteprime.",
+          "La copertura garantita di tutti i soggetti richiesti non può essere verificata dalle anteprime.",
+          "La presenza simultanea di tre categorie distinte (uccelli, ritratti, landscape) potrebbe non essere realizzabile in una singola immagine."
+        ],
+        "requested_categories": [
+          {
+            "id": "uccelli",
+            "description": "Immagini contenenti uccelli."
+          },
+          {
+            "id": "ritratti",
+            "description": "Immagini contenenti ritratti di persone."
+          },
+          {
+            "id": "landscape",
+            "description": "Immagini contenenti paesaggi."
+          }
+        ]
+      },
+      "passed": true
+    },
+    {
+      "kind": "interpretation",
+      "instructions": "cerchi rossi e quadrati blu",
+      "seconds": 19.878778624988627,
+      "result": {
+        "summary": "La richiesta prevede la presenza di cerchi rossi e quadrati blu nella composizione fotografica.",
+        "criteria": [
+          "Forma: cerchi",
+          "Colore: rosso",
+          "Forma: quadrati",
+          "Colore: blu"
+        ],
+        "ambiguities": [
+          "Non è specificato se cerchi e quadrati devono essere presenti simultaneamente o se si tratta di una scelta esclusiva.",
+          "Non è specificato se gli oggetti devono essere solidi, tracciati o solo accennati."
+        ],
+        "unsupported": [
+          "L'identità esatta degli oggetti (es. 'cerchi' generici vs cerchi specifici) non può essere verificata con certezza dalle anteprime.",
+          "La copertura garantita di questi elementi specifici non è verificabile senza un'analisi completa dell'immagine."
+        ],
+        "requested_categories": [
+          {
+            "id": "cerchi",
+            "description": "Oggetti con forma circolare o rotonda."
+          },
+          {
+            "id": "quadrati",
+            "description": "Oggetti con forma quadrata o rettangolare."
+          }
+        ]
+      },
+      "passed": true
+    },
+    {
+      "kind": "synthetic_image",
+      "fixture": "red_circle",
+      "seconds": 15.593385625019437,
+      "result": {
+        "match": "no",
+        "reason": "L'immagine contiene solo un cerchio rosso, mancando i quadrati blu richiesti.",
+        "scene": "Un cerchio rosso su sfondo bianco.",
+        "quality_issues": [],
+        "preference_score": 0.2,
+        "category_matches": {
+          "cerchi": "yes",
+          "quadrati": "no"
+        }
+      },
+      "passed": false
+    },
+    {
+      "kind": "synthetic_image",
+      "fixture": "blue_square",
+      "seconds": 15.434302165987901,
+      "result": {
+        "match": "no",
+        "reason": "L'immagine contiene solo un quadrato blu, mancando completamente i cerchi rossi richiesti.",
+        "scene": "Un quadrato blu su sfondo bianco.",
+        "quality_issues": [],
+        "preference_score": 0.0,
+        "category_matches": {
+          "cerchi": "no",
+          "quadrati": "yes"
+        }
+      },
+      "passed": false
+    },
+    {
+      "kind": "synthetic_image",
+      "fixture": "blank",
+      "seconds": 12.817677458020626,
+      "result": {
+        "match": "no",
+        "reason": "L'immagine è completamente bianca e non contiene cerchi rossi o quadrati blu.",
+        "scene": "Sfondo bianco uniforme.",
+        "quality_issues": [
+          "Assenza totale di contenuto visivo"
+        ],
+        "preference_score": 0.0,
+        "category_matches": {
+          "cerchi": "no",
+          "quadrati": "no"
+        }
+      },
+      "passed": true
+    }
+  ],
+  "passed": false
+}

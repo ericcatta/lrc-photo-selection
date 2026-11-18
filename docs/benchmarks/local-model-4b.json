@@ -1,0 +1,93 @@
+{
+  "synthetic_only": true,
+  "photo_quality_validated": false,
+  "model_directory": "Qwen3-VL-4B-Instruct-4bit",
+  "runtime": "0.3.9",
+  "load_seconds": 5.214444040990202,
+  "peak_memory_bytes": 4266422568,
+  "seconds": 35.048986957990564,
+  "checks": [
+    {
+      "kind": "interpretation",
+      "instructions": "uccelli, ritratti, landscape",
+      "seconds": 4.997710541996639,
+      "result": {
+        "summary": "Richiesta di fotografie che includano uccelli, ritratti e paesaggi.",
+        "criteria": [],
+        "ambiguities": [],
+        "unsupported": [],
+        "requested_categories": [
+          {
+            "id": "birds",
+            "description": "Uccelli in varie pose e ambienti."
+          },
+          {
+            "id": "portraits",
+            "description": "Ritratti di persone e animali, con dettagli distinti."
+          },
+          {
+            "id": "landscape",
+            "description": "Paesaggi naturali e urbani, con composizione e dettagli."
+          }
+        ]
+      },
+      "passed": true
+    },
+    {
+      "kind": "interpretation",
+      "instructions": "cerchi rossi e quadrati blu",
+      "seconds": 4.363679000001866,
+      "result": {
+        "summary": "cerchi rossi e quadrati blu",
+        "criteria": [],
+        "ambiguities": [],
+        "unsupported": [],
+        "requested_categories": []
+      },
+      "passed": false
+    },
+    {
+      "kind": "synthetic_image",
+      "fixture": "red_circle",
+      "seconds": 6.962958708987571,
+      "result": {
+        "match": "no",
+        "reason": "Nessun cerchio rosso o quadrato blu visibile.",
+        "scene": "Nessuna scena rilevante.",
+        "quality_issues": [],
+        "preference_score": 0.0,
+        "category_matches": {}
+      },
+      "passed": false
+    },
+    {
+      "kind": "synthetic_image",
+      "fixture": "blue_square",
+      "seconds": 6.857917166023981,
+      "result": {
+        "match": "no",
+        "reason": "Nessun cerchio rosso o quadrato blu visibile.",
+        "scene": "Nessuna immagine.",
+        "quality_issues": [],
+        "preference_score": 0.0,
+        "category_matches": {}
+      },
+      "passed": false
+    },
+    {
+      "kind": "synthetic_image",
+      "fixture": "blank",
+      "seconds": 6.611169792013243,
+      "result": {
+        "match": "no",
+        "reason": "Nessuna immagine fornita.",
+        "scene": "",
+        "quality_issues": [],
+        "preference_score": 0.0,
+        "category_matches": {}
+      },
+      "passed": true
+    }
+  ],
+  "passed": false
+}

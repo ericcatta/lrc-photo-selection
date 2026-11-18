@@ -110,8 +110,8 @@ class LocalVLM:
         if not model_dir.is_dir() or not (model_dir / 'config.json').is_file():
             raise ValueError('Configurare un modello visivo già presente sul Mac')
         self.config = json.loads((model_dir / 'config.json').read_text())
-        if self.config.get('model_type') != 'qwen3_vl':
-            raise ValueError('Questo adattatore richiede Qwen3-VL')
+        if self.config.get('model_type') not in {'qwen3_vl', 'qwen3_5'}:
+            raise ValueError('Questo adattatore richiede Qwen3-VL o Qwen3.5 visivo')
         files = {}
         for path in sorted(model_dir.rglob('*')):
             if path.is_file() and (path.suffix in {'.json', '.safetensors', '.jinja', '.txt', '.model'} or path.name == 'PROVENANCE.md'):

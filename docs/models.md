@@ -26,3 +26,45 @@ Campione autorizzato con annotazioni manuali: cambi di persona, pose/risate, raf
 Fonti: https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct ; https://huggingface.co/mlx-community/Qwen3-VL-4B-Instruct-4bit ; https://github.com/Neywa-Labs/mlx-vlm .
 
 La correttezza generale delle istruzioni non è dimostrata da una risposta JSON valida. Servono prove positive, negative, preferenze, conflitti, immagini ambigue e confronto manuale. I risultati dei modelli sono interpretazioni, non fatti importati.
+
+
+## Ricerca del 18 novembre 2026, dopo il test locale
+
+Hardware nuovamente rilevato: MacBook Pro M1 Max, 10 core CPU, 64 GB di memoria unificata. La scelta tiene conto anche della latenza sulle raccolte, non solo della possibilità di caricare i pesi.
+
+| Candidato | Valutazione per questo progetto |
+|---|---|
+| Qwen3.5-9B MLX 4 bit | Candidato preferito per il nuovo collaudo: modello visivo/testuale, Apache-2.0, circa 6 GB di pesi. Il produttore riporta risultati generali incoraggianti su comprensione visiva e istruzioni; non sono misure della selezione fotografica o della conversione quantizzata. |
+| Qwen3-VL-4B attuale | Più piccolo e già integrato. Il precedente fallimento 150/160 comprendeva problemi di integrazione; non basta a condannare il modello. Rimane il riferimento del confronto tecnico. |
+| Qwen3-VL-8B | Alternativa nella stessa famiglia, con licenza Apache-2.0. Non installata: Qwen3.5-9B offre una candidatura più interessante nella stessa fascia di memoria, da verificare sul nostro flusso. |
+| Qwen3-VL-32B | Può essere plausibile quantizzato con 64 GB, ma maggiore memoria e latenza non sono giustificate da misure di beneficio nel nostro caso. Non installato. |
+| Liquid LFM2.5-VL-3B | Interessante per velocità/dispositivi limitati, ma licenza specifica LFM e nessun vantaggio dimostrato nel culling in italiano. Non installato. |
+| Mapika decider-4b v3 | Supporta immagini, ma restituisce decisioni tipizzate su opzioni esplicite anziché essere un sostituto diretto del nostro interprete generativo. Richiederebbe un diverso adattatore; nessun vantaggio misurato che lo giustifichi ora. |
+
+Fonti primarie consultate:
+- [Qwen3.5-9B, scheda e benchmark del produttore](https://huggingface.co/Qwen/Qwen3.5-9B)
+- [Licenza originale Apache 2.0](https://huggingface.co/Qwen/Qwen3.5-9B/blob/main/LICENSE)
+- [Conversione MLX 4 bit](https://huggingface.co/mlx-community/Qwen3.5-9B-MLX-4bit)
+- [Qwen3-VL-8B](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct)
+- [LFM2.5-VL-3B](https://huggingface.co/LiquidAI/LFM2.5-VL-3B)
+- [Decider v3](https://huggingface.co/Mapika/decider-4b)
+- [Runtime MLX-VLM](https://github.com/Neywa-Labs/mlx-vlm)
+
+La preferenza per 9B è una decisione ingegneristica, non la dimostrazione che sia universalmente il migliore. Non esiste in queste fonti un benchmark corrispondente a preferenze personali, varietà di un servizio e merito fotografico. La selezione dell'intera raccolta resta responsabilità della pipeline; cambiare modello non sostituisce le regole di copertura.
+
+Il controllo riproducibile `scripts/check_local_model.py` usa soltanto forme geometriche generate e istruzioni italiane. Misura caricamento, memoria MLX e risposte strutturate; non accede ai servizi o alle foto dell'utente e non valuta l'estetica. Usa lo stesso adattatore dell'app, offline e con thinking disabilitato. I risultati reali su Campione di prova restano da verificare manualmente.
+
+### Esito della prova e decisione
+
+**Nessuna sostituzione attivata.** Rimane Qwen3-VL-4B con runtime 0.3.9 e prompt v6 già corretto. Questo non significa che sia stato dimostrato il modello migliore: il candidato 9B non ha superato il requisito funzionale minimo del confronto.
+
+| Configurazione | Controlli attesi superati | Tempo totale | Picco memoria MLX |
+|---|---:|---:|---:|
+| Qwen3-VL-4B, runtime 0.3.9 | 2/5 | 35,0 s | 4,27 GB |
+| Qwen3.5-9B, runtime 0.4.3 isolato | 3/5 | 93,4 s | 7,70 GB |
+
+Il 9B riconosce cerchio rosso e quadrato blu ma esclude ciascuna immagine perché manca l'altra categoria: non rispetta la copertura tra immagini prevista dall'app. Il 4B in questa prova non ricava le categorie geometriche e sbaglia i due casi positivi. Entrambi generano risposte strutturalmente valide: la validazione JSON da sola non prova comprensione corretta. Le differenze includono anche il runtime, quindi non sono attribuibili esclusivamente ai pesi. Picco MLX non equivale alla memoria totale del Mac. Tempi non estrapolabili a un matrimonio.
+
+Report sintetici completi: [4B](benchmarks/local-model-4b.json), [9B](benchmarks/local-model-9b.json). Per ripetere il candidato occorre MLX-VLM 0.4.3; è stato valutato da un pacchetto estratto temporaneamente, senza aggiornare la .venv attiva. Revisione pesi 9B: `938d8919941c6e7efd3c7150eff7fe9d12afa631`. Il suo download viene rimosso dopo la prova negativa, evitando un secondo modello inutilizzato. Nessuna foto reale, decisione, stella o richiesta API coinvolta.
+
+Prima di cambiare modello, il criterio di accettazione resta: categorie distinte conservate nell'insieme, nessun obbligo inventato di compresenza nella singola foto, casi positivi e negativi corretti, quindi confronto umano sul campione reale. Non dichiarare risolto questo comportamento sulla base dei soli test unitari.
