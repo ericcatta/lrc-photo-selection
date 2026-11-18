@@ -3,7 +3,7 @@
 ## Eseguito sul Mac
 
 - Backend/API e simulazione SDK Lua 5.1: **32 test passati** (`.venv/bin/python -m pytest -q`).
-- Componenti React in DOM simulato: **6 test passati** (`npm --prefix web test`).
+- Componenti React in DOM simulato: **7 test passati** (`npm --prefix web test`).
 - Build TypeScript/Vite completata; controllo dipendenze Python superato.
 - Prova HTTP con server reale su loopback e sei anteprime sintetiche: asset compilati, autenticazione cookie, importazione, selezione conservativa (5 candidate per target 3) e piano di 4 rating idonei verificati. Server temporaneo arrestato dopo la prova.
 - Apple Vision compilato con Swift e provato su un'immagine sintetica uniforme: nessun volto rilevato, nessun errore.
@@ -32,3 +32,9 @@ Modalità OpenAI non implementata/abilitata per l'analisi: mancano campione misu
 Fonte: https://github.com/advisories/GHSA-fc5q-39xc-vjpf
 
 Un avviso di deprecazione Starlette riguarda il test client httpx; i test passano. Nessun errore di esecuzione rilevato nei controlli svolti.
+
+## Revisione dell’interfaccia
+
+Layout a pagina unica con provino principale, strumenti laterali, palette neutra chiara e barra superiore scura. Slider quantità sincronizzato con inserimento numerico preciso; slider separato per la dimensione delle anteprime. I dettagli dei criteri restano espandibili e i limiti del motore sono visibili.
+
+Verificati build e 7 test React, compresi sincronizzazione slider/campo, limiti della quantità e assenza di avvio implicito. Acquisito screenshot reale con Chrome headless autorizzato e sei anteprime sintetiche; controllo desktop a 1500 px e mobile a 390 px senza overflow orizzontale. Nessun catalogo o fotografia reale coinvolto.

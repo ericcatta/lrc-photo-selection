@@ -37,7 +37,7 @@ beforeEach(()=>{
   }));
 });
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
-async function workspace(){render(<App/>);fireEvent.click(await screen.findByRole('button',{name:/TEST SINTETICO/}));await screen.findByRole('heading',{name:'Configura la selezione'});}
+async function workspace(){render(<App/>);await screen.findByRole('option',{name:/TEST SINTETICO/});fireEvent.change(screen.getByLabelText('Servizio'),{target:{value:'synthetic'}});await screen.findByRole('heading',{name:'Configura la selezione'});}
 
 describe('Revisione senza dati reali',()=>{
   it('salva criteri senza avviare implicitamente l’analisi',async()=>{
@@ -49,6 +49,20 @@ describe('Revisione senza dati reali',()=>{
     await waitFor(()=>expect((screen.getByRole('button',{name:'Avvia selezione'}) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole('button',{name:'Avvia selezione'}));
     await waitFor(()=>expect(calls.some(c=>c.path.endsWith('/analyze'))).toBe(true));
+  });
+  it('sincronizza slider e numero preciso senza avviare la selezione',async()=>{
+    await workspace();
+    const slider=screen.getByRole('slider',{name:'Regola numero di candidate'}) as HTMLInputElement;
+    const number=screen.getByLabelText('Numero di candidate') as HTMLInputElement;
+    expect(slider.min).toBe('1');expect(slider.max).toBe('2');
+    fireEvent.change(slider,{target:{value:'1'}});
+    expect(number.value).toBe('1');
+    expect(screen.getByText('Da salvare')).toBeTruthy();
+    fireEvent.change(number,{target:{value:'2'}});
+    expect(slider.value).toBe('2');
+    fireEvent.change(number,{target:{value:'3'}});
+    expect((screen.getByRole('button',{name:'Avvia selezione'}) as HTMLButtonElement).disabled).toBe(true);
+    expect(calls.some(c=>c.path.endsWith('/settings')||c.path.endsWith('/analyze'))).toBe(false);
   });
   it('richiede conferma per ultima candidata anche prima di una analisi',async()=>{
     await workspace();
@@ -86,7 +100,7 @@ describe('Revisione senza dati reali',()=>{
   it('rimuove il token dal frammento URL dopo la connessione',async()=>{
     history.replaceState(null,'','/#token=synthetic-connection-token');
     render(<App/>);
-    await screen.findByRole('button',{name:/TEST SINTETICO/});
+    await screen.findByRole('option',{name:/TEST SINTETICO/});
     expect(location.hash).toBe('');
     expect(calls[0].path).toBe('/session');
   });

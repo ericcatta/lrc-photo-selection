@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { api, ApiError, photoPath, servicePath, type Plan, type Photo, type State, type Service, type Summary, type Settings, type Preset } from './api';
 import './style.css';
 
@@ -46,7 +46,34 @@ export function App() {
     catch(e) { setError(message(e)); }
     finally {setBusy(false);}
   }
-  return <div className="layout"><aside><div className="brand">Prima selezione<small>Lightroom Classic · Locale</small></div>{!login && <><div className="sidehead"><strong>Servizi</strong><button onClick={refresh} disabled={busy}>Aggiorna</button></div><nav aria-label="Servizi">{services.map(s => <button key={s.id} className={service?.id === s.id ? 'active' : ''} onClick={()=>void open(s.id)} disabled={busy}><strong>{s.title}</strong><small>{s.photo_count} foto</small></button>)}</nav></>}</aside><main>{error && <p role="alert" className="warning">{error}</p>}{login ? <form className="panel empty" onSubmit={e=>{e.preventDefault();void connect(token);}}><h1>Apri la sessione locale</h1><p>Apri l’app dal plugin Lightroom oppure incolla il token di accesso.</p><label>Token<input type="password" value={token} onChange={e=>setToken(e.target.value)} autoComplete="off" required/></label><button className="primary" disabled={busy}>Accedi</button></form> : service ? <Workspace key={service.id} service={service} update={setService} presets={presets} setPresets={setPresets}/> : <section className="panel empty"><h1>{services.length?'Apri un servizio':'Importa un servizio da Lightroom'}</h1><p>{services.length?'Scegli un servizio dalla barra laterale.':'In Lightroom seleziona le foto, esegui “Prepara servizio” e poi premi Aggiorna.'}</p></section>}</main></div>;
+  return <div className="app-shell">
+    <header className="appbar">
+      <div className="brand"><strong>Selezione</strong><span>Estensione per Lightroom Classic</span></div>
+      {!login && <div className="service-controls">
+        <label className="service-switch">Servizio
+          <select value={service?.id ?? ''} disabled={busy} onChange={e => {if(e.target.value)void open(e.target.value);}}>
+            <option value="" disabled>{services.length ? 'Scegli un servizio' : 'Nessun servizio importato'}</option>
+            {services.map(item => <option key={item.id} value={item.id}>{item.title} · {item.photo_count} foto</option>)}
+          </select>
+        </label>
+        <button onClick={refresh} disabled={busy}>Aggiorna</button>
+      </div>}
+      <span className="local-status">Solo locale</span>
+    </header>
+    <main>
+      {error && <p role="alert" className="warning">{error}</p>}
+      {login ? <form className="panel empty" onSubmit={e => {e.preventDefault();void connect(token);}}>
+        <p className="eyebrow">Connessione al plugin</p><h1>Apri la sessione locale</h1>
+        <p>Apri l’app dal plugin Lightroom oppure incolla il token di accesso.</p>
+        <label>Token<input type="password" value={token} onChange={e=>setToken(e.target.value)} autoComplete="off" required/></label>
+        <button className="primary" disabled={busy}>Accedi</button>
+      </form> : service ? <Workspace key={service.id} service={service} update={setService} presets={presets} setPresets={setPresets}/> :
+      <section className="panel empty"><p className="eyebrow">Da Lightroom alla selezione</p>
+        <h1>{services.length?'Apri un servizio':'Importa un servizio da Lightroom'}</h1>
+        <p>{services.length?'Scegli un servizio nel menu in alto.':'In Lightroom seleziona le foto, esegui “Prepara servizio” e poi premi Aggiorna.'}</p>
+      </section>}
+    </main>
+  </div>;
 }
 
 function Workspace({service:s,update,presets,setPresets}:{service:Service;update:(s:Service)=>void;presets:Preset[];setPresets:(p:Preset[])=>void}) {
@@ -60,6 +87,7 @@ function Workspace({service:s,update,presets,setPresets}:{service:Service;update
   const [showCompare,setShowCompare]=useState(false);
   const [zoom,setZoom]=useState(100);
   const [limit,setLimit]=useState(48);
+  const [thumbnailSize,setThumbnailSize]=useState(230);
   const [plan,setPlan]=useState<Plan|null>(null);
   const [showRating,setShowRating]=useState(false);
   const [presetEdit,setPresetEdit]=useState(false);
@@ -99,20 +127,88 @@ function Workspace({service:s,update,presets,setPresets}:{service:Service;update
   const offer=presets.find(p=>p.id===draft.preset_id&&p.version===draft.preset_version);
   const snapshot=draft.preset_snapshot;
   const valid=Number.isInteger(draft.target)&&draft.target>=1&&draft.target<=s.photos.length;
-  return <><header className="top"><div><p className="eyebrow">Servizio fotografico</p><h1>{s.title}</h1><p>{selectedIds.size} candidate su {s.photos.length} foto · revisione {s.revision}</p></div><button className="primary" disabled={busy||s.proposal?.stale||!selectedIds.size||draftChanged||s.status!=='ready'} onClick={()=>{setPlan(null);setShowRating(true);}}>Rivedi le stelle</button></header>
-    {error&&<p role="alert" className="warning">{error}</p>}
-    {s.status==='applying'&&<p role="status" className="warning">Applicazione stelle in corso. Completa o riprendi dal plugin.</p>}
-    <form className="panel config" onSubmit={e=>{e.preventDefault();void save(true);}}><h2>Configura la selezione</h2><fieldset disabled={busy}><div className="fields"><label>Numero di candidate <input type="number" min={1} max={s.photos.length} value={Number.isNaN(draft.target)?'':draft.target} required onChange={e=>setDraft({...draft,target:e.target.valueAsNumber})}/></label><label>Preset <select value={draft.preset_id+':'+draft.preset_version} onChange={e=>{const p=presets.find(x=>x.id+':'+x.version===e.target.value); if(p)setDraft({...draft,preset_id:p.id,preset_version:p.version,preset_snapshot:p});}}>{!offer&&<option value={draft.preset_id+':'+draft.preset_version}>{snapshot?.name??draft.preset_id} · v{draft.preset_version} (salvato)</option>}{presets.map(p=><option key={p.id} value={p.id+':'+p.version}>{p.name} · v{p.version}</option>)}</select></label><label>Modalità<select value={draft.mode} onChange={e=>setDraft({...draft,mode:e.target.value as Settings['mode']})}><option value="local">Locale</option><option value="hybrid" disabled>Ibrida (non disponibile)</option></select></label></div><p>La proposta può superare il numero richiesto per preservare la copertura.</p><div className="actions"><button type="button" onClick={()=>editPreset(null)}>Nuovo preset</button>{offer&&<button type="button" onClick={()=>editPreset(offer)}>Modifica preset</button>}</div>{(offer??snapshot)?.criteria?.length ? <ul>{(offer??snapshot)?.criteria.map((x,i)=><li key={i}>{x}</li>)}</ul>:null}<label>Istruzioni per questo servizio<textarea rows={3} value={draft.instructions} onChange={e=>setDraft({...draft,instructions:e.target.value})}/></label>{cameras.length>0&&<details><summary>Offset fotocamere (secondi)</summary><p>Salvati nell’app. Il motore iniziale non usa ancora la sequenza temporale per raggruppare.</p><div className="fields">{cameras.map(c=><label key={c}>{c}<input type="number" step="1" value={draft.camera_offsets[c]??0} onChange={e=>setDraft({...draft,camera_offsets:{...draft.camera_offsets,[c]:Number(e.target.value)}})}/></label>)}</div></details>}<div className="actions"><button type="button" disabled={!draftChanged||!valid} onClick={()=>void save(false)}>Salva criteri</button><button className="primary" disabled={!valid||draft.mode!=='local'||s.status!=='ready'}>Avvia selezione</button></div></fieldset></form>
-    {s.criteria.length>0&&<section className="panel"><h2>Verifica dei criteri</h2><ul>{s.criteria.map((c,i)=><li key={i}><strong>{c.text}</strong> · {({partial:'Parzialmente supportato',unsupported:'Non supportato',supported:'Supportato',ambiguous:'Ambiguo'} as Record<string,string>)[c.status]??c.status}. {c.reason}</li>)}</ul></section>}
-    {s.job&&<section className="panel" aria-live="polite"><h2>Analisi locale</h2><p>{({running:'In corso',queued:'In coda',completed:'Completata',interrupted:'Interrotta',failed:'Non riuscita'} as Record<string,string>)[s.job.status]??s.job.status} · {s.job.completed} / {s.job.total}</p>{s.job.status==='running'&&<progress value={s.job.completed} max={s.job.total||1}/>} {s.job.error&&<p className="warning">{s.job.error}</p>}</section>}
-    {s.proposal?.stale&&<p className="warning">I criteri sono cambiati. Riavvia la selezione per aggiornare la proposta.</p>}
-    {s.proposal?.warnings.map((w,i)=><p key={i} className="warning">{w}</p>)}
-    {selectedIds.size<s.settings.target&&<p className="warning">La revisione corrente è sotto il numero richiesto ({s.settings.target}).</p>}
-    <section className="review"><div className="reviewhead"><h2>Rivedi le foto</h2><div className="actions"><label>Stato<select value={filter} onChange={e=>{setFilter(e.target.value as State|'all');setLimit(48);}}><option value="all">Tutte</option>{states.map(x=><option key={x} value={x}>{labels[x]}</option>)}</select></label>{groups.length>0&&<label>Gruppo<select value={group} onChange={e=>{setGroup(e.target.value);setLimit(48);}}><option value="">Tutti</option>{groups.map((g,i)=><option key={g.id} value={g.id}>Gruppo {i+1} · {g.members.length} foto</option>)}</select></label>}<button disabled={compare.length!==2} onClick={()=>{setZoom(100);setShowCompare(true);}}>Confronta ({compare.length}/2)</button></div></div>
-    {visible.length===0&&<p>Nessuna foto corrisponde ai filtri.</p>}
-    <div className="grid">{visible.slice(0,limit).map(p=>{const d=decision(p);const g=groupMap.get(p.id);return <article className="card" key={p.id}><Preview service={s} photo={p}/><div className="cardbody"><strong title={p.filename}>{p.filename}</strong><small>{p.camera||'Fotocamera non indicata'} · {p.baseline_rating} stelle all’importazione</small>{g&&<p>{g.representative===p.id?'Rappresentante del gruppo':('Rappresentata da '+(photoMap.get(g.representative)?.filename??'altra foto'))} · {g.reason}</p>}{s.proposal?.reasons[p.id]&&<p>{s.proposal.reasons[p.id]}</p>}<div className="actions"><label className="sr" htmlFor={'state-'+p.id}>Stato {p.filename}</label><select id={'state-'+p.id} value={d.state} disabled={busy} onChange={e=>void decide(p,e.target.value as State,d.locked)}>{states.map(x=><option key={x} value={x}>{labels[x]}</option>)}</select><label className="check"><input type="checkbox" checked={d.locked} disabled={busy} onChange={e=>void decide(p,d.state,e.target.checked)}/>Blocca</label><label className="check"><input type="checkbox" checked={compare.includes(p.id)} onChange={()=>chooseCompare(p.id)}/>Confronta</label></div></div></article>;})}</div>
-    {visible.length>limit&&<button onClick={()=>setLimit(limit+48)}>Mostra altre foto ({visible.length-limit})</button>}</section>
-    {s.receipts.length>0&&<section className="panel"><h2>Esiti Lightroom</h2>{s.receipts.map(r=><details key={r.batch_id}><summary>{r.results.filter(i=>i.status==='applied').length} stelle applicate · {r.results.length} foto verificate</summary><ul>{r.results.map(i=><li key={i.photo_id}>{photoMap.get(i.photo_id)?.filename??i.photo_id}: {({applied:'Applicata',skipped:'Saltata',conflict:'Conflitto',uncertain:'Da verificare'} as Record<string,string>)[i.status]??i.status} — {i.reason}</li>)}</ul></details>)}</section>}
+  return <>
+    <div className="workspace">
+      <header className="top">
+        <div className="service-heading"><p className="eyebrow">Servizio importato</p><h1>{s.title}</h1><p className="selection-count">{selectedIds.size} candidate su {s.photos.length} foto</p></div>
+        <button className="primary" disabled={busy||s.proposal?.stale||!selectedIds.size||draftChanged||s.status!=='ready'} onClick={()=>{setPlan(null);setShowRating(true);}}>Rivedi le stelle <span aria-hidden="true">→</span></button>
+      </header>
+      <section className="gallery" aria-label="Area di revisione">
+        {error&&<p role="alert" className="warning">{error}</p>}
+        {s.status==='applying'&&<p role="status" className="warning">Applicazione stelle in corso. Completa o riprendi dal plugin.</p>}
+        {s.proposal?.stale&&<p className="warning">I criteri sono cambiati. Riavvia la selezione per aggiornare la proposta.</p>}
+        {s.proposal?.warnings.map((w,i)=><p key={i} className="warning">{w}</p>)}
+        {selectedIds.size<s.settings.target&&<p className="warning">La revisione corrente è sotto il numero richiesto ({s.settings.target}).</p>}
+        <div className="reviewhead">
+          <div className="review-title"><h2>Provino</h2><span>{visible.length} foto</span></div>
+          <div className="review-filters">
+            <label>Stato<select value={filter} onChange={e=>{setFilter(e.target.value as State|'all');setLimit(48);}}><option value="all">Tutte</option>{states.map(x=><option key={x} value={x}>{labels[x]}</option>)}</select></label>
+            {groups.length>0&&<label>Gruppo<select value={group} onChange={e=>{setGroup(e.target.value);setLimit(48);}}><option value="">Tutti</option>{groups.map((g,i)=><option key={g.id} value={g.id}>Gruppo {i+1} · {g.members.length} foto</option>)}</select></label>}
+            <label className="thumbnail-control">Anteprime<input aria-label="Dimensione anteprime" type="range" min={170} max={330} step={10} value={thumbnailSize} onChange={e=>setThumbnailSize(e.target.valueAsNumber)}/></label>
+            <button disabled={compare.length!==2} onClick={()=>{setZoom(100);setShowCompare(true);}}>Confronta ({compare.length}/2)</button>
+          </div>
+        </div>
+        {visible.length===0&&<p className="empty-filter">Nessuna foto corrisponde ai filtri.</p>}
+        <div className="grid" style={{'--thumbnail-size': `${thumbnailSize}px`} as CSSProperties}>
+          {visible.slice(0,limit).map((photo,index)=>{
+            const d=decision(photo);const g=groupMap.get(photo.id);
+            return <article className={'card state-'+d.state+(compare.includes(photo.id)?' is-compared':'')} key={photo.id}>
+              <div className="photo-topline"><span>{String(index+1).padStart(2,'0')}</span><span>{labels[d.state]}{d.locked?' · Bloccata':''}</span></div>
+              <Preview service={s} photo={photo}/>
+              <div className="cardbody">
+                <strong className="filename" title={photo.filename}>{photo.filename}</strong>
+                <div className="photo-meta"><span title={photo.camera}>{photo.camera||'Fotocamera non indicata'}</span><span className="stars" aria-label={photo.baseline_rating+' stelle all’importazione'} title="Valutazione all’importazione">{'★'.repeat(photo.baseline_rating)}{'☆'.repeat(5-photo.baseline_rating)}</span></div>
+                <div className="photo-controls">
+                  <label className="sr" htmlFor={'state-'+photo.id}>Stato {photo.filename}</label>
+                  <select id={'state-'+photo.id} value={d.state} disabled={busy} onChange={e=>void decide(photo,e.target.value as State,d.locked)}>{states.map(x=><option key={x} value={x}>{labels[x]}</option>)}</select>
+                  <label className="check"><input type="checkbox" checked={d.locked} disabled={busy} onChange={e=>void decide(photo,d.state,e.target.checked)}/>Blocca</label>
+                </div>
+                <div className="photo-footer"><label className="check"><input type="checkbox" checked={compare.includes(photo.id)} onChange={()=>chooseCompare(photo.id)}/>Confronta</label>
+                  {(g||s.proposal?.reasons[photo.id])&&<details className="photo-reason"><summary>Motivo</summary>
+                    {g&&<p>{g.representative===photo.id?'Rappresentante del gruppo':('Rappresentata da '+(photoMap.get(g.representative)?.filename??'altra foto'))}</p>}
+                    <p>{s.proposal?.reasons[photo.id]??g?.reason}</p>
+                  </details>}
+                </div>
+              </div>
+            </article>;
+          })}
+        </div>
+        {visible.length>limit&&<button className="load-more" onClick={()=>setLimit(limit+48)}>Mostra altre foto ({visible.length-limit})</button>}
+        <footer className="gallery-footer"><span>{s.proposal?'Proposta locale · revisione manuale disponibile':'Selezione manuale · tutte le foto iniziano candidate'}</span><span>Escludere non cancella il file</span></footer>
+      </section>
+      <aside className="inspector" aria-label="Strumenti di selezione">
+        <form className="config" onSubmit={e=>{e.preventDefault();void save(true);}}>
+          <div className="panel-heading"><h2>Configura la selezione</h2>{draftChanged&&<span className="unsaved" role="status">Da salvare</span>}</div>
+          <fieldset disabled={busy}>
+            <div className="tool-section target-section">
+              <div className="target-heading"><label htmlFor="target-count">Numero di candidate</label><input id="target-count" type="number" min={1} max={s.photos.length} value={Number.isNaN(draft.target)?'':draft.target} required onChange={e=>setDraft({...draft,target:e.target.valueAsNumber})}/></div>
+              <input aria-label="Regola numero di candidate" aria-describedby="target-help" type="range" min={1} max={s.photos.length} step={1} value={Number.isFinite(draft.target)?Math.min(s.photos.length,Math.max(1,draft.target)):1} onChange={e=>setDraft({...draft,target:e.target.valueAsNumber})}/>
+              <div className="range-ends"><span>1</span><span>{s.photos.length} foto</span></div>
+              <p id="target-help" className="hint">Obiettivo indicativo. La copertura può richiedere più candidate.</p>
+            </div>
+            <div className="tool-section">
+              <label>Preset<select value={draft.preset_id+':'+draft.preset_version} onChange={e=>{const p=presets.find(x=>x.id+':'+x.version===e.target.value);if(p)setDraft({...draft,preset_id:p.id,preset_version:p.version,preset_snapshot:p});}}>
+                {!offer&&<option value={draft.preset_id+':'+draft.preset_version}>{snapshot?.name??draft.preset_id} · v{draft.preset_version} (salvato)</option>}
+                {presets.map(p=><option key={p.id} value={p.id+':'+p.version}>{p.name} · v{p.version}</option>)}
+              </select></label>
+              <div className="preset-actions"><button className="text-button" type="button" onClick={()=>editPreset(null)}>Nuovo preset</button>{offer&&<button className="text-button" type="button" onClick={()=>editPreset(offer)}>Modifica preset</button>}</div>
+              <label>Modalità<select value={draft.mode} onChange={e=>setDraft({...draft,mode:e.target.value as Settings['mode']})}><option value="local">Solo locale</option><option value="hybrid" disabled>Ibrida (non disponibile)</option></select></label>
+            </div>
+            <details className="tool-section disclosure">
+              <summary>Criteri e istruzioni{draft.instructions.trim()&&<span className="detail-tag">Personalizzati</span>}</summary>
+              {(offer??snapshot)?.criteria?.length ? <ul className="criteria-list">{(offer??snapshot)?.criteria.map((x,i)=><li key={i}>{x}</li>)}</ul>:null}
+              <label>Istruzioni per questo servizio<textarea rows={4} value={draft.instructions} onChange={e=>setDraft({...draft,instructions:e.target.value})}/></label>
+              <p className="hint">Il motore attuale non interpreta il testo libero: usalo come riferimento per la revisione manuale.</p>
+            </details>
+            {cameras.length>0&&<details className="tool-section disclosure"><summary>Sincronizzazione fotocamere</summary><p className="hint">Offset in secondi, solo nell’app. Non ancora utilizzati dal motore iniziale.</p><div className="camera-fields">{cameras.map(c=><label key={c}>{c}<input type="number" step="1" value={draft.camera_offsets[c]??0} onChange={e=>setDraft({...draft,camera_offsets:{...draft.camera_offsets,[c]:Number(e.target.value)}})}/></label>)}</div></details>}
+            <div className="tool-section run-section"><div className="run-actions"><button type="button" disabled={!draftChanged||!valid} onClick={()=>void save(false)}>Salva criteri</button><button className="primary" disabled={!valid||draft.mode!=='local'||s.status!=='ready'}>Avvia selezione</button></div><p className="hint">Raggruppamento di anteprime identiche. Scene e persone non ancora riconosciute.</p></div>
+          </fieldset>
+        </form>
+        {s.criteria.length>0&&<details className="tool-section disclosure criteria-status"><summary>Verifica dei criteri<span className="detail-tag">{s.criteria.filter(c=>c.status!=='supported').length} da verificare</span></summary><ul>{s.criteria.map((c,i)=><li key={i}><strong>{c.text}</strong><span className="criterion-status">{({partial:'Parzialmente supportato',unsupported:'Non supportato',supported:'Supportato',ambiguous:'Ambiguo'} as Record<string,string>)[c.status]??c.status}</span><p>{c.reason}</p></li>)}</ul></details>}
+        {s.job&&<section className="tool-section job-status" aria-live="polite"><h2>Analisi locale</h2><p>{({running:'In corso',queued:'In coda',completed:'Completata',interrupted:'Interrotta',failed:'Non riuscita'} as Record<string,string>)[s.job.status]??s.job.status} · {s.job.completed} / {s.job.total}</p>{s.job.status==='running'&&<progress value={s.job.completed} max={s.job.total||1}/>} {s.job.error&&<p className="warning">{s.job.error}</p>}</section>}
+        {s.receipts.length>0&&<section className="tool-section"><h2>Esiti Lightroom</h2>{s.receipts.map(r=><details key={r.batch_id}><summary>{r.results.filter(i=>i.status==='applied').length} stelle applicate · {r.results.length} foto verificate</summary><ul>{r.results.map(i=><li key={i.photo_id}>{photoMap.get(i.photo_id)?.filename??i.photo_id}: {({applied:'Applicata',skipped:'Saltata',conflict:'Conflitto',uncertain:'Da verificare'} as Record<string,string>)[i.status]??i.status} — {i.reason}</li>)}</ul></details>)}</section>}
+      </aside>
+    </div>
     {showCompare&&<Modal title="Confronta le anteprime" close={()=>setShowCompare(false)}><label>Zoom {zoom}%<input type="range" min={100} max={300} step={10} value={zoom} onChange={e=>setZoom(e.target.valueAsNumber)}/></label><div className="comparison">{compare.map(id=>{const p=photoMap.get(id);return p&&<figure key={id}><Preview service={s} photo={p} zoom={zoom}/><figcaption>{p.filename}</figcaption></figure>;})}</div></Modal>}
     {showRating&&<Modal title="Rivedi le stelle" close={()=>setShowRating(false)}><p>{selectedIds.size} candidate su {s.photos.length} foto. {s.proposal?'La proposta include le decisioni manuali.':'Selezione manuale, nessuna analisi eseguita.'}</p><p>Il plugin può assegnare una stella alle candidate idonee con zero stelle. Prima dell’applicazione occorre verificare che la scrittura automatica dei metadati su file sia disabilitata.</p>{plan?<><p role="status"><strong>{plan.items.length} modifiche proposte</strong> · revisione {plan.revision}</p>{plan.warnings.map((w,i)=><p className="warning" key={i}>{w}</p>)}{plan.items.length>0&&<><p>Apri “Applica stelle” nel plugin con il catalogo del servizio. Controlla la scrittura automatica dei metadati e conferma il riepilogo in Lightroom.</p><ul className="planlist">{plan.items.map(i=><li key={i.photo_id}>{photoMap.get(i.photo_id)?.filename??i.photo_id} · ID {i.local_id} · {i.expected_rating} → 1 ★</li>)}</ul></>}</>:<button className="primary" disabled={busy} onClick={()=>void action(async()=>setPlan(await api<Plan>(path+'/rating-plan','POST',{revision:s.revision})))}>Prepara anteprima delle modifiche</button>}{error&&<p role="alert" className="warning">{error}</p>}</Modal>}
     {presetEdit&&<Modal title={presetBase?'Modifica preset':'Nuovo preset'} close={()=>setPresetEdit(false)}><form onSubmit={e=>{e.preventDefault();void savePreset();}}><label>Nome<input value={presetName} onChange={e=>setPresetName(e.target.value)} required/></label><label>Criteri, uno per riga<textarea rows={5} value={presetCriteria} onChange={e=>setPresetCriteria(e.target.value)}/></label><p>I servizi esistenti mantengono la revisione salvata.</p><button className="primary" disabled={busy||!presetName.trim()}>Salva preset</button>{error&&<p role="alert" className="warning">{error}</p>}</form></Modal>}
