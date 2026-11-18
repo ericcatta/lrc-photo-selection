@@ -22,3 +22,10 @@ Use Astra Medium as orchestrator when available. Personal agents: planner gpt-6.
 - Il proprietario autorizza scegliere il modello disponibile più leggero/economico adeguato al compito; grunt gpt-6.1-sol disponibile è stato autorizzato in questa sessione.
 - Per i test usare soltanto il catalogo JPEG autorizzato o dati sintetici. Non aprire né usare il catalogo principale non autorizzato. Nessun blocco per anno deve essere introdotto nel prodotto.
 - Aprire Lightroom soltanto dal file del catalogo scelto (doppio clic richiesto dall'utente), mai avviandolo genericamente sull'ultimo catalogo.
+
+## Audit approvato e implementazione
+- Selezione temporanea delle candidate nella vista Lightroom consentita tramite SDK; non modifica metadati, raccolte o file.
+- Raccolte Classic locali facoltative previste solo dopo collaudo reale SDK e verifica della mancata sincronizzazione; attualmente non implementate. Nessun flag/etichetta aggiuntivo.
+- Servizi e archivio web restano locali; aggiunte solo nello stesso catalogo, senza aggiornare baseline o decisioni delle foto già importate.
+- Piani stelle confermati esplicitamente nella web app e nuovamente nel plugin. Riprendere il piano attivo, non un piano più recente arbitrario.
+- I test browser usano solo fixture sintetiche; Chrome headless è stato autorizzato dal proprietario. Il controllo grafico continua a essere bloccato da cgWindowNotFound.

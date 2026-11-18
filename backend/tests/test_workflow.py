@@ -147,11 +147,12 @@ def test_rating_plan_preserves_existing_and_missing_edit_time(client):
     assert [i['photo_id'] for i in p['items']] == ['u0:1']
     assert p['items'][0]['target_rating'] == 1
     assert p['warnings']
+    client.post('/api/services/test-service/rating-plan/confirm', json={'batch_id': p['batch_id']}).raise_for_status()
     assert client.post('/api/services/test-service/rating-plan/claim', json={'batch_id': p['batch_id']}).status_code == 200
     receipt = {'batch_id': p['batch_id'], 'results': [{'photo_id': 'u0:1', 'status': 'applied', 'before': 0, 'after': 1, 'reason': ''}]}
     assert client.post('/api/services/test-service/rating-receipts', json=receipt).status_code == 200
     assert client.post('/api/services/test-service/rating-receipts', json=receipt).status_code == 200
-    assert client.get('/api/services/test-service/rating-plan/latest').status_code == 409
+    assert client.get('/api/services/test-service/rating-plan/latest').status_code == 404
     s = detail(client)
     assert client.post('/api/services/test-service/rating-plan', json={'revision': s['revision']}).json()['items'] == []
 
@@ -159,12 +160,13 @@ def test_stale_plan_and_receipt_validation(client):
     s = imported(client)
     p = client.post('/api/services/test-service/rating-plan', json={'revision': s['revision']}).json()
     s = configure(client, s, target=2)
-    assert client.get('/api/services/test-service/rating-plan/latest').status_code == 409
+    assert client.get('/api/services/test-service/rating-plan/latest').status_code == 404
     invalid = {'batch_id': p['batch_id'], 'results': [{'photo_id': 'foreign-photo', 'status': 'applied', 'after': 1}]}
     assert client.post('/api/services/test-service/rating-receipts', json=invalid).status_code == 422
     # A stale plan cannot be claimed after edits.
     assert client.post('/api/services/test-service/rating-plan/claim', json={'batch_id': p['batch_id']}).status_code == 409
     p = client.post('/api/services/test-service/rating-plan', json={'revision': s['revision']}).json()
+    client.post('/api/services/test-service/rating-plan/confirm', json={'batch_id': p['batch_id']}).raise_for_status()
     assert client.post('/api/services/test-service/rating-plan/claim', json={'batch_id': p['batch_id']}).status_code == 200
     assert client.post('/api/services/test-service/rating-plan/claim', json={'batch_id': p['batch_id']}).json()['resumed']
     assert client.put('/api/services/test-service/settings', json={'revision': s['revision'], 'settings': s['settings']}).status_code == 409
@@ -261,8 +263,121 @@ def test_second_server_cannot_reset_first_servers_jobs(client):
 def test_cancelled_before_attempt_can_be_retried(client):
     s = imported(client, manifest(count=1))
     plan = client.post('/api/services/test-service/rating-plan', json={'revision': s['revision']}).json()
+    client.post('/api/services/test-service/rating-plan/confirm', json={'batch_id': plan['batch_id']}).raise_for_status()
     client.post('/api/services/test-service/rating-plan/claim', json={'batch_id': plan['batch_id']}).raise_for_status()
     client.post('/api/services/test-service/rating-receipts', json={'batch_id': plan['batch_id'], 'results': [{'photo_id': 'u0:1', 'status': 'skipped'}]}).raise_for_status()
     s = detail(client)
     new = client.post('/api/services/test-service/rating-plan', json={'revision': s['revision']}).json()
     assert len(new['items']) == 1
+
+
+def test_rating_confirmation_pins_plan_and_active_batch_survives_restart(tmp_path):
+    base = '/api/services/test-service/rating-plan'
+    headers = {'Authorization': 'Bearer ' + TOKEN}
+    with TestClient(create_app(tmp_path, token=TOKEN), headers=headers) as client:
+        service = imported(client)
+        first = client.post(base, json={'revision': service['revision']}).json()
+        second = client.post(base, json={'revision': service['revision']}).json()
+        assert client.post(base + '/claim', json={'batch_id': first['batch_id']}).status_code == 409
+        client.post(base + '/confirm', json={'batch_id': first['batch_id']}).raise_for_status()
+        assert client.get(base + '/latest').json() == first
+        assert client.post(base + '/claim', json={'batch_id': second['batch_id']}).status_code == 409
+        client.post(base + '/claim', json={'batch_id': first['batch_id']}).raise_for_status()
+        assert client.post(base + '/confirm', json={'batch_id': second['batch_id']}).status_code == 409
+    with TestClient(create_app(tmp_path, token=TOKEN), headers=headers) as client:
+        assert client.get(base + '/latest').json() == first
+        assert client.post(base + '/claim', json={'batch_id': first['batch_id']}).json()['resumed'] is True
+
+
+def test_append_resumes_preserves_previous_decisions_and_invalidates_plan(client):
+    base = '/api/services/test-service'
+    service = imported(client, manifest(count=1))
+    service = client.patch(base + '/decisions/u0:1', json={'revision': service['revision'], 'state': 'preferred', 'locked': True}).json()
+    plan = client.post(base + '/rating-plan', json={'revision': service['revision']}).json()
+    client.post(base + '/rating-plan/confirm', json={'batch_id': plan['batch_id']}).raise_for_status()
+    photos = manifest(count=2)['photos']
+    photos[0]['baseline_rating'] = 5
+    request = {'id': 'append-1', 'catalog_id': service['catalog_id'], 'photos': photos}
+    assert client.post(base + '/append', json=request | {'catalog_id': 'different'}).status_code == 409
+    expected = {'photo_ids': ['u1:1'], 'completed': False}
+    assert client.post(base + '/append', json=request).json() == expected
+    assert client.post(base + '/append', json=request).json() == expected
+    assert client.post(base + '/complete').status_code == 409
+    assert client.put(base + '/photos/u0:1/preview', content=jpeg('red')).status_code == 409
+    client.put(base + '/photos/u1:1/preview', content=jpeg('red')).raise_for_status()
+    client.post(base + '/complete', json={'import_id': 'append-1'}).raise_for_status()
+    assert client.post(base + '/append', json=request).json() == (expected | {'completed': True})
+    current = detail(client)
+    assert current['photos'][0]['baseline_rating'] == 0
+    assert current['settings']['target'] == service['settings']['target']
+    assert current['decisions'] == service['decisions']
+    assert current['selected_ids'] == ['u0:1', 'u1:1']
+    assert client.post(base + '/rating-plan/claim', json={'batch_id': plan['batch_id']}).status_code == 409
+    assert client.post(base + '/rating-plan', json={'revision': current['revision']}).status_code == 409
+    current = run(client, current)
+    archived = client.put(base + '/archive', json={'revision': current['revision'], 'archived': True}).json()
+    assert archived['archived'] is True
+    assert client.post(base + '/rating-plan', json={'revision': archived['revision']}).status_code == 409
+    reopened = client.put(base + '/archive', json={'revision': archived['revision'], 'archived': False}).json()
+    assert reopened['decisions'] == service['decisions']
+
+
+def test_replace_changes_representative_and_history_is_atomic(client):
+    base = '/api/services/test-service'
+    client.post('/api/imports', json=manifest(count=2)).raise_for_status()
+    for pid in ('u0:1', 'u1:1'):
+        client.put(f'{base}/photos/{pid}/preview', content=jpeg('red')).raise_for_status()
+    service = client.post(base + '/complete').json()
+    service = run(client, configure(client, service, target=1))
+    assert service['proposal']['groups'][0]['representative'] == 'u0:1'
+    replaced = client.post(base + '/replace', json={'revision': service['revision'], 'from_photo_id': 'u0:1', 'to_photo_id': 'u1:1'}).json()
+    assert replaced['selected_ids'] == ['u1:1']
+    assert replaced['proposal']['groups'][0]['representative'] == 'u1:1'
+    assert replaced['can_undo']
+    undone = client.post(base + '/undo', json={'revision': replaced['revision']}).json()
+    assert undone['decisions'] == {}
+    assert undone['selected_ids'] == ['u0:1']
+    assert undone['can_redo']
+    redone = client.post(base + '/redo', json={'revision': undone['revision']}).json()
+    assert redone['decisions'] == replaced['decisions']
+
+
+def test_custom_criteria_never_claim_text_understanding(client):
+    from lrc_selection.app import criteria_for
+    assert criteria_for({'preset_snapshot': {'criteria': ['Solo foto dello sposo']}})[0]['status'] == 'unsupported'
+
+
+def test_history_survives_restart_and_new_branch_drops_redo(tmp_path):
+    headers = {'Authorization': 'Bearer ' + TOKEN}
+    base = '/api/services/test-service'
+    with TestClient(create_app(tmp_path, token=TOKEN), headers=headers) as c:
+        s = imported(c)
+        c.patch(base + '/decisions/u0:1', json={'revision': s['revision'], 'state': 'preferred', 'locked': True}).raise_for_status()
+    with TestClient(create_app(tmp_path, token=TOKEN), headers=headers) as c:
+        s = c.get(base).json()
+        assert s['can_undo']
+        s = c.post(base + '/undo', json={'revision': s['revision']}).json()
+        assert not s['decisions']
+        s = c.patch(base + '/decisions/u1:1', json={'revision': s['revision'], 'state': 'review'}).json()
+        assert not s['can_redo']
+        assert c.post(base + '/redo', json={'revision': s['revision']}).status_code == 409
+
+
+def test_settings_clear_confirmed_plan_and_legacy_manifest_digest(client):
+    import hashlib
+    import json
+    m = manifest()
+    service = imported(client, m)
+    # Original Pydantic field order, including default catalog label.
+    original = {k: (m.get(k, '') if k == 'catalog_label' else m[k]) for k in
+                ('schema_version', 'id', 'title', 'catalog_id', 'catalog_label', 'photos')}
+    original['photos'] = [dict(photo, captured_at=float(photo['captured_at'])) for photo in original['photos']]
+    assert client.app.state.store.get(service['id'])['manifest_sha256'] == hashlib.sha256(
+        json.dumps(original, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
+    plan = client.post('/api/services/test-service/rating-plan', json={'revision': service['revision']}).json()
+    client.post('/api/services/test-service/rating-plan/confirm', json={'batch_id': plan['batch_id']}).raise_for_status()
+    service = configure(client, service, target=1)
+    assert 'confirmed_batch_id' not in service
+    assert client.get('/api/services/test-service/rating-plan/latest').status_code == 404
+    with client.app.state.store.connect() as db:
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 1

@@ -17,6 +17,19 @@ class Photo(StrictModel):
     baseline_edit_time: float | None = None
     is_virtual_copy: bool = False
 
+class ImportPhotos(StrictModel):
+    schema_version: Literal[1] = 1
+    id: str = Field(min_length=1, max_length=128, pattern=r'^[A-Za-z0-9_-]+$')
+    catalog_id: str = Field(min_length=1, max_length=128)
+    photos: list[Photo] = Field(min_length=1, max_length=100000)
+
+    @model_validator(mode='after')
+    def unique(self):
+        keys = [(p.uuid, p.local_id) for p in self.photos]
+        if len(set(keys)) != len(keys) or len({p.id for p in self.photos}) != len(self.photos) or len({p.local_id for p in self.photos}) != len(self.photos):
+            raise ValueError('Identificativi duplicati nel manifest')
+        return self
+
 class ImportManifest(StrictModel):
     schema_version: Literal[1] = 1
     id: str = Field(min_length=1, max_length=128, pattern=r'^[A-Za-z0-9_-]+$')
@@ -47,6 +60,19 @@ class SettingsUpdate(StrictModel):
 
 class Revision(StrictModel):
     revision: int
+
+class Archive(Revision):
+    archived: bool
+
+class Replace(Revision):
+    from_photo_id: str
+    to_photo_id: str
+
+class BatchInput(StrictModel):
+    batch_id: str
+
+class CompleteImport(StrictModel):
+    import_id: str
 
 class Decision(StrictModel):
     revision: int

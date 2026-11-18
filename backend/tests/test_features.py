@@ -48,3 +48,105 @@ def test_apple_vision_processes_synthetic_preview(tmp_path):
     result = face_rectangles(tool, preview)
     assert result['observations'] == []
     assert result['error'] is None
+
+
+def test_feature_cache_survives_interruption_and_model_changes(client, monkeypatch):
+    from lrc_selection import features
+    from test_workflow import manifest, jpeg
+    m = manifest(count=2)
+    client.post('/api/imports', json=m)
+    for i, color in enumerate(['red', 'blue']):
+        client.put(f'/api/services/test-service/photos/u{i}:1/preview', content=jpeg(color))
+    s = client.post('/api/services/test-service/complete').json()
+    monkeypatch.setattr(features, 'comparison_suggestions', lambda records: [])
+    class Interruptible:
+        identity = {'adapter': 'synthetic-cache-v1'}
+        calls = 0
+        fail = True
+        def encode(self, path):
+            self.calls += 1
+            if self.fail and self.calls == 2:
+                raise RuntimeError('synthetic interruption')
+            return [1.0, 0.0]
+    import pytest
+    encoder = Interruptible()
+    with pytest.raises(RuntimeError, match='synthetic interruption'):
+        extract(client.app.state.store, s['id'], encoder)
+    assert 'interpretations' not in client.app.state.store.get(s['id'])
+    encoder.fail = False
+    extract(client.app.state.store, s['id'], encoder)
+    assert encoder.calls == 3  # successful first image reused
+    extract(client.app.state.store, s['id'], encoder)
+    assert encoder.calls == 3
+    encoder.identity = {'adapter': 'synthetic-cache-v2'}
+    extract(client.app.state.store, s['id'], encoder)
+    assert encoder.calls == 5
+    assert client.app.state.store.get(s['id'])['decisions'] == s['decisions']
+
+
+def test_failed_face_detection_not_cached(tmp_path):
+    from lrc_selection.features import FeatureCache
+    cache = FeatureCache(tmp_path)
+    calls = []
+    def failed():
+        calls.append(True)
+        return {'error': 'synthetic error', 'observations': []}
+    for _ in range(2):
+        cache.get_or_compute('hash', 'faces', {'version': 1}, failed)
+    assert len(calls) == 2
+
+
+def test_comparison_suggestions_are_evidence_only():
+    import pytest
+    pytest.importorskip('numpy')
+    from lrc_selection.features import comparison_suggestions
+    records = {'a': {'embedding': [1, 0]}, 'b': {'embedding': [0.99, 0.01]}, 'c': {'embedding': [0, 1]}}
+    pairs = comparison_suggestions(records)
+    assert pairs[0]['photo_id'] == 'a' and pairs[0]['other_photo_id'] == 'b'
+    assert all('selected' not in p and 'representative' not in p for p in pairs)
+    assert len({tuple(sorted((p['photo_id'], p['other_photo_id']))) for p in pairs}) == len(pairs)
+    with pytest.raises(ValueError):
+        comparison_suggestions({'a': {'embedding': [0, 0]}, 'b': {'embedding': [1, 0]}})
+
+
+def test_feature_job_is_explicit_and_keeps_decisions(client, monkeypatch, tmp_path):
+    import time
+    from lrc_selection import features
+    from test_workflow import manifest, jpeg
+    tool = tmp_path / 'synthetic-vision-helper'
+    tool.write_text('synthetic-test-only')
+    tool.chmod(0o700)
+    monkeypatch.setenv('LRC_VISION_TOOL', str(tool))
+    monkeypatch.delenv('LRC_SIGLIP_DIR', raising=False)
+    calls = []
+    def detect(tool, path):
+        calls.append(path)
+        return {'observations': [], 'error': None}
+    monkeypatch.setattr(features, 'face_rectangles', detect)
+    client.post('/api/imports', json=manifest(count=1)).raise_for_status()
+    client.put('/api/services/test-service/photos/u0:1/preview', content=jpeg('red')).raise_for_status()
+    s = client.post('/api/services/test-service/complete').json()
+    assert calls == []
+    base = '/api/services/test-service'
+    s = client.patch(base + '/decisions/u0:1', json={'revision': s['revision'], 'state': 'preferred', 'locked': True}).json()
+    assert client.get('/api/capabilities').json()['faces']
+    for _ in range(2):
+        client.post(base + '/features', json={'revision': s['revision']}).raise_for_status()
+        for _ in range(100):
+            s = client.get(base).json()
+            if s['job']['status'] != 'running':
+                break
+            time.sleep(.01)
+        assert s['job']['status'] == 'completed'
+        assert s['decisions']['u0:1'] == {'state': 'preferred', 'locked': True}
+        assert s['selected_ids'] == ['u0:1']
+    assert len(calls) == 1
+    assert s['interpretations']['records']['u0:1']['faces']['observations'] == []
+
+
+def test_missing_feature_components_are_reported(client, monkeypatch, tmp_path):
+    monkeypatch.setenv('LRC_VISION_TOOL', str(tmp_path / 'absent'))
+    monkeypatch.delenv('LRC_SIGLIP_DIR', raising=False)
+    s = imported(client)
+    assert client.get('/api/capabilities').json()['features'] is False
+    assert client.post('/api/services/test-service/features', json={'revision': s['revision']}).status_code == 409

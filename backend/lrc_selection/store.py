@@ -16,6 +16,9 @@ class Store:
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.path = root / 'selection.sqlite3'
         with self.connect() as db:
+            version = db.execute('PRAGMA user_version').fetchone()[0]
+            if version > 1:
+                raise RuntimeError('Database app creato da una versione più recente')
             db.executescript('''
                 PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS services(id TEXT PRIMARY KEY, body TEXT NOT NULL);
@@ -23,6 +26,8 @@ class Store:
                 CREATE TABLE IF NOT EXISTS batches(id TEXT PRIMARY KEY, service_id TEXT NOT NULL, body TEXT NOT NULL);
             ''')
             db.execute('INSERT OR IGNORE INTO presets VALUES(?,?)', ('wedding', json.dumps(WEDDING)))
+            if version == 0:
+                db.execute('PRAGMA user_version=1')
         self.path.chmod(0o600)
 
     def connect(self):

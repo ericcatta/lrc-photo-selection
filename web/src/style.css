@@ -151,3 +151,12 @@ dialog form label { margin-bottom: 15px; }
   .comparison { grid-template-columns: 1fr; } .empty { margin: 24px 16px; }
 }
 @media (prefers-reduced-motion: no-preference) { button { transition: background-color .12s, border-color .12s; } }
+
+.review-history { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.review-history details { font-size: 12px; }
+.card:focus-visible { outline: 2px solid #536e82; outline-offset: 2px; }
+
+.face-details { margin-top: 8px; font-size: 12px; }
+.face-crops { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.face-crop { width: 76px; overflow: hidden; position: relative; }
+.face-crop img { position: absolute; max-width: none; }

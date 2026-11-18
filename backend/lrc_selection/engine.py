@@ -9,6 +9,8 @@ SELECTED = {'candidate', 'preferred', 'review'}
 
 def effective_selected(service):
     selected = set(service['proposal']['selected']) if service.get('proposal') else {p['id'] for p in service['photos']}
+    if service.get('proposal'):
+        selected.update(service['proposal'].get('added_candidates', ()))
     for pid, decision in service['decisions'].items():
         if decision['state'] in SELECTED:
             selected.add(pid)

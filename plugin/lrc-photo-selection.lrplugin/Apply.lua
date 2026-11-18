@@ -4,31 +4,17 @@ local Dialogs = import 'LrDialogs'
 local Progress = import 'LrProgressScope'
 local View = import 'LrView'
 
-local function chooseService(context, registration, label)
-    local options = {}
-    for _, item in ipairs(Common.request('GET', '/api/services')) do
-        if item.catalog_id == registration and (item.status == 'ready' or item.status == 'applying') then
-            options[#options + 1] = {title = item.title, value = item.id}
-        end
-    end
-    assert(#options > 0, 'Nessun servizio pronto associato a questo catalogo.')
-    local properties = Binding.makePropertyTable(context)
-    properties.selected = options[1].value
-    local view = View.osFactory()
-    local answer = Dialogs.presentModalDialog {
-        title = 'Scegli il servizio',
-        contents = view:column {
-            bind_to_object = properties,
-            view:static_text { title = 'Catalogo: ' .. label },
-            view:popup_menu { value = View.bind 'selected', items = options },
-        }, actionVerb = 'Mostra piano', cancelVerb = 'Annulla',
-    }
-    return answer == 'ok' and Common.key(properties.selected) or nil
-end
+local Selection = require 'Selection'
 
-local function confirmPlan(context, service, plan, label)
+local function confirmPlan(context, service, plan, label, byID)
     local properties = Binding.makePropertyTable(context)
     properties.xmpChecked = false
+    local lines = {}
+    for _, item in ipairs(plan.items) do
+        local filename = byID[item.photo_id].filename or item.photo_id
+        lines[#lines + 1] = filename:gsub('%c', ' ') .. ' [' .. item.photo_id .. '] · 0 → 1'
+    end
+    properties.operations = table.concat(lines, '\n')
     local view = View.osFactory()
     local answer = Dialogs.presentModalDialog {
         title = 'Conferma applicazione stelle',
@@ -36,7 +22,8 @@ local function confirmPlan(context, service, plan, label)
             bind_to_object = properties,
             view:static_text { title = 'Catalogo: ' .. label },
             view:static_text { title = 'Servizio: ' .. service.title .. ' (revisione ' .. plan.revision .. ')' },
-            view:static_text { title = 'Il piano mostrato nella web app prevede fino a ' .. #plan.items .. ' passaggi da zero a una stella.' },
+            view:static_text { title = 'Piano ' .. plan.batch_id .. ' · ' .. #plan.items .. ' operazioni' },
+            view:scrolled_view { width = 620, height = 180, view:edit_field { value = View.bind 'operations', width_in_chars = 72, height_in_lines = #lines + 1, enabled = false } },
             view:static_text { title = 'Controlla Impostazioni catalogo → Metadati prima di confermare.' },
             view:checkbox { title = 'Ho verificato che la scrittura automatica delle modifiche in XMP è disattivata.', value = View.bind 'xmpChecked' },
         }, actionVerb = 'Applica stelle', cancelVerb = 'Annulla',
@@ -46,41 +33,31 @@ local function confirmPlan(context, service, plan, label)
     return true
 end
 
-local function matches(photo, item)
-    return photo and photo.localIdentifier == item.local_id and photo:getRawMetadata('uuid') == item.uuid
-end
-
-local function identify(catalog, items)
-    local photos, missing = {}, {}
-    for _, item in ipairs(items) do
-        local photo = catalog:findPhotoByUuid(item.uuid)
-        if matches(photo, item) then photos[item.photo_id] = photo else missing[item.local_id] = item end
-    end
-    if next(missing) then
-        for _, photo in ipairs(catalog:getAllPhotos()) do
-            local item = missing[photo.localIdentifier]
-            if item and matches(photo, item) then photos[item.photo_id] = photo end
-        end
-    end
-    return photos
-end
-
 local function result(item, status, reason, before, after)
     return {photo_id = item.photo_id, status = status, reason = reason, before = before, after = after}
 end
 
-local function applyOne(catalog, path, marker, plan, item, photo)
-    local prior = Common.read(marker)
-    if prior then
-        if prior.batch_id == plan.batch_id then return result(item, 'uncertain', 'Tentativo precedente senza esito verificato; stella non riapplicata.') end
-        return result(item, 'skipped', 'Questa fotografia ha già avuto un tentativo di valutazione.')
-    end
-    if not matches(photo, item) then return result(item, 'conflict', 'Identificativo Lightroom non trovato o ambiguo.') end
+local function applyOne(catalog, path, marker, outcomePath, plan, item, photo, progress)
     local outcome, wrote
     local gate = catalog:withWriteAccessDo('Selezione fotografie: assegna una stella', function()
         Common.assertCatalog(path)
-        if not matches(photo, item) then
-            outcome = result(item, 'conflict', 'Identificativo Lightroom non più corrispondente.')
+        outcome = Common.read(outcomePath)
+        if outcome then return end
+        local prior = Common.read(marker)
+        if prior then
+            if prior.batch_id == plan.batch_id then
+                outcome = result(item, 'uncertain', 'Tentativo precedente senza esito verificato; stella non riapplicata.')
+            else
+                outcome = result(item, 'skipped', 'Questa fotografia ha già avuto un tentativo di valutazione.')
+            end
+            return
+        end
+        if progress:isCanceled() then
+            outcome = result(item, 'skipped', 'Applicazione interrotta prima di questa foto.')
+            return
+        end
+        if not Selection.matches(photo, item) then
+            outcome = result(item, 'conflict', 'Identificativo Lightroom non trovato o ambiguo.')
             return
         end
         local current = photo:getRawMetadata('rating') or 0
@@ -103,7 +80,9 @@ end
 Common.run('Applica stelle', function(context)
     local catalog, path, label = Common.catalog()
     local registration = Common.registration(path, false)
-    local sid = chooseService(context, registration, label)
+    local sid = Selection.chooseService(context, registration, label, {
+        title = 'Scegli il servizio', action = 'Mostra piano', statuses = {ready = true, applying = true},
+    })
     if not sid then return end
     local endpoint = '/api/services/' .. sid
     local service = Common.request('GET', endpoint)
@@ -126,11 +105,11 @@ Common.run('Applica stelle', function(context)
         Dialogs.message('Nessuna modifica', 'Il piano non contiene valutazioni da applicare.', 'info')
         return
     end
-    if not confirmPlan(context, service, plan, label) then return end
+    if not confirmPlan(context, service, plan, label, byID) then return end
     Common.assertCatalog(path)
     local claimed = Common.request('POST', endpoint .. '/rating-plan/claim', {batch_id = batch})
     assert(claimed.ok == true, 'Il piano non è stato riservato dal backend.')
-    local photos = identify(catalog, plan.items)
+    local photos = Selection.identify(catalog, plan.items)
     local progress = Progress { title = 'Applicazione valutazioni Lightroom', functionContext = context }
     local results, applied = {}, 0
     for index, item in ipairs(plan.items) do
@@ -139,9 +118,9 @@ Common.run('Applica stelle', function(context)
         local outcome = Common.read(outcomePath)
         if not outcome then
             local marker = Common.file('rating-' .. registration, item.photo_id)
-            if progress:isCanceled() and not Common.read(marker) then outcome = result(item, 'skipped', 'Applicazione interrotta prima di questa foto.')
-            else outcome = applyOne(catalog, path, marker, plan, item, photos[item.photo_id]) end
-            Common.write(outcomePath, outcome)
+            outcome = applyOne(catalog, path, marker, outcomePath, plan, item, photos[item.photo_id], progress)
+            local recorded = Common.read(outcomePath)
+            if recorded then outcome = recorded else Common.write(outcomePath, outcome) end
         end
         results[#results + 1] = outcome
         if outcome.status == 'applied' then applied = applied + 1 end

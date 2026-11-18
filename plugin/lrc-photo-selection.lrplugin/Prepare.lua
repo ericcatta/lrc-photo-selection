@@ -5,6 +5,7 @@ local Dialogs = import 'LrDialogs'
 local Progress = import 'LrProgressScope'
 local Tasks = import 'LrTasks'
 local View = import 'LrView'
+local Selection = require 'Selection'
 
 local function metadata(catalog, photos)
     local raw = catalog:batchGetRawMetadata(photos,
@@ -78,17 +79,29 @@ Common.run('Prepara servizio', function(context)
     local registration = Common.registration(path, true)
     local pendingFile = Common.file('imports', registration)
     local pending = Common.read(pendingFile)
-    local title
+    local title, appendTo
     if pending and pending.manifest then
-        local answer = Dialogs.confirm('Importazione sospesa', 'Riprendi «' .. pending.manifest.title .. '» nel catalogo ' .. label .. '.', 'Riprendi', 'Annulla', 'Nuovo servizio')
-        if answer == 'other' then
-            pending = nil
+        local answer = Dialogs.confirm('Importazione sospesa', 'Riprendi «' .. pending.manifest.title .. '» nel catalogo ' .. label .. '.', 'Riprendi', 'Annulla', not pending.append_to and 'Nuovo servizio' or nil)
+        if answer == 'other' and not pending.append_to then
             title = askTitle(context, label, #photos)
             if not title then return end
-        elseif answer ~= 'ok' then return end
+            Common.write(Common.file('imports-history', pending.manifest.id), pending)
+            pending = nil
+        elseif answer == 'ok' then
+            appendTo = pending.append_to
+        else return end
     else
-        title = askTitle(context, label, #photos)
-        if not title then return end
+        local answer = Dialogs.confirm('Prepara servizio', 'Usa le foto selezionate per un nuovo servizio o aggiungile a un servizio esistente.', 'Nuovo servizio', 'Annulla', 'Aggiungi a servizio')
+        if answer == 'other' then
+            appendTo = Selection.chooseService(context, registration, label, {
+                title = 'Aggiungi a un servizio', action = 'Aggiungi foto', statuses = {ready = true},
+            })
+            if not appendTo then return end
+            title = Common.request('GET', '/api/services/' .. appendTo).title
+        elseif answer == 'ok' then
+            title = askTitle(context, label, #photos)
+            if not title then return end
+        else return end
     end
     Common.assertCatalog(path)
     local selected, objects = metadata(catalog, photos)
@@ -102,15 +115,32 @@ Common.run('Prepara servizio', function(context)
     else
         manifest = { schema_version = 1, id = Common.newID(registration), title = title,
             catalog_id = registration, catalog_label = label, photos = selected }
-        Common.write(pendingFile, { manifest = manifest })
+        Common.write(pendingFile, { manifest = manifest, append_to = appendTo })
     end
-    local service = Common.request('POST', '/api/imports', manifest)
-    local endpoint = '/api/services/' .. Common.key(manifest.id)
-    if service.status == 'importing' then
+    local endpoint = '/api/services/' .. Common.key(appendTo or manifest.id)
+    local service, upload = nil, {}
+    if appendTo then
+        local added = Common.request('POST', endpoint .. '/append', {
+            schema_version = 1, id = manifest.id, catalog_id = registration, photos = manifest.photos,
+        })
+        if not added.completed then
+            local accepted = {}
+            for _, id in ipairs(added.photo_ids) do accepted[id] = true end
+            for _, item in ipairs(manifest.photos) do
+                if accepted[item.id] then upload[#upload + 1] = item end
+            end
+            service = Common.request('GET', endpoint)
+            assert(service.status == 'importing', 'Importazione incrementale non attiva: dati di ripresa conservati.')
+        end
+    else
+        service = Common.request('POST', '/api/imports', manifest)
+        upload = manifest.photos
+    end
+    if service and service.status == 'importing' then
         local progress = Progress { title = 'Preparazione anteprime Lightroom', functionContext = context }
         local missing, ready = 0, {}
         for _, p in ipairs(service.photos) do ready[p.id] = p.preview_ready end
-        for index, item in ipairs(manifest.photos) do
+        for index, item in ipairs(upload) do
             Common.assertCatalog(path)
             if progress:isCanceled() then return end
             if not ready[item.id] then
@@ -123,13 +153,13 @@ Common.run('Prepara servizio', function(context)
                     else missing = missing + 1 end
                 else missing = missing + 1 end
             end
-            progress:setPortionComplete(index, #manifest.photos)
+            progress:setPortionComplete(index, #upload)
         end
         progress:done()
         if missing > 0 and Dialogs.confirm('Anteprime mancanti',
             tostring(missing) .. ' fotografie senza anteprima. Annulla per riprovare oppure chiudi l’importazione con le anteprime disponibili.',
             'Concludi importazione', 'Lascia in sospeso') ~= 'ok' then return end
-        Common.request('POST', endpoint .. '/complete', '{}')
+        Common.request('POST', endpoint .. '/complete', appendTo and {import_id = manifest.id} or '{}')
     end
     Common.write(pendingFile, { completed = true })
     Common.openBrowser()

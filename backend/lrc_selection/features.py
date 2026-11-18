@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import platform
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -54,31 +55,101 @@ def face_rectangles(tool, path):
             'observations': result['faces'], 'error': result.get('error'),
             'warning': 'Nessun volto rilevato non significa nessuna persona. Identità non confrontata.'}
 
-def extract(store, sid, encoder=None, vision_tool=None):
+class FeatureCache:
+    """Successful component results survive interrupted runs; no source paths stored."""
+    def __init__(self, root):
+        self.path = root / 'feature-cache.sqlite3'
+        with sqlite3.connect(self.path) as db:
+            db.execute('CREATE TABLE IF NOT EXISTS features (key TEXT PRIMARY KEY, body TEXT NOT NULL)')
+        self.path.chmod(0o600)
+
+    def get_or_compute(self, preview_hash, component, identity, compute):
+        key = hashlib.sha256(json.dumps([preview_hash, component, identity], sort_keys=True).encode()).hexdigest()
+        with sqlite3.connect(self.path) as db:
+            row = db.execute('SELECT body FROM features WHERE key=?', (key,)).fetchone()
+        if row:
+            return json.loads(row[0])
+        value = compute()
+        # A failed detection is not evidence and must be retryable.
+        if isinstance(value, dict) and value.get('error'):
+            return value
+        encoded = json.dumps(value, allow_nan=False)
+        with sqlite3.connect(self.path) as db:
+            db.execute('INSERT OR REPLACE INTO features VALUES (?, ?)', (key, encoded))
+        return value
+
+
+def comparison_suggestions(records):
+    """Nearest visual neighbors for manual comparison, never equivalence groups.
+
+    Blocked numpy multiplication bounds temporary memory; no model download.
+    At most one neighbor per image, with symmetric pairs deduplicated.
+    """
+    vectors = [(pid, record.get('embedding')) for pid, record in records.items() if record.get('embedding')]
+    if len(vectors) < 2:
+        return []
+    import numpy as np
+    matrix = np.asarray([v for _, v in vectors], dtype=np.float32)
+    if matrix.ndim != 2 or not np.isfinite(matrix).all():
+        raise ValueError('Embedding non validi')
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    if (norms == 0).any():
+        raise ValueError('Embedding nullo')
+    matrix = matrix / norms
+    pairs = {}
+    for start in range(0, len(vectors), 128):
+        scores = matrix[start:start + 128] @ matrix.T
+        for offset, row in enumerate(scores):
+            i = start + offset
+            row[i] = -np.inf
+            j = int(np.argmax(row))
+            a, b = sorted((vectors[i][0], vectors[j][0]))
+            pairs[(a, b)] = {'photo_id': a, 'other_photo_id': b,
+                            'cosine_similarity': float(np.clip(row[j], -1, 1)),
+                            'reason': 'Vicina nello spazio visivo: confronto suggerito, equivalenza non dimostrata.'}
+    return sorted(pairs.values(), key=lambda pair: (-pair['cosine_similarity'], pair['photo_id'], pair['other_photo_id']))
+
+
+def extract(store, sid, encoder=None, vision_tool=None, *, job_revision=None):
     service = store.get(sid)
-    if service['status'] != 'ready':
+    expected_status = 'analyzing' if job_revision is not None else 'ready'
+    if job_revision is not None:
+        store.check_revision(service, job_revision)
+    if service['status'] != expected_status or service.get('archived'):
         raise ValueError('Servizio non pronto')
     revision = service['revision']
     records = {}
+    cache = FeatureCache(store.root)
+    vision_identity = None
+    if vision_tool:
+        vision_identity = {'binary_sha256': hashlib.sha256(Path(vision_tool).read_bytes()).hexdigest(),
+                           'os': platform.mac_ver(), 'adapter': 'apple-vision-rectangles-v1'}
     for photo in service['photos']:
         if not photo['preview_ready']:
             records[photo['id']] = {'error': 'Anteprima mancante'}
             continue
         path = store.preview_path(sid, photo['id'])
-        record = {'preview_sha256': photo['preview_sha256']}
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest != photo['preview_sha256']:
+            raise ValueError('Anteprima cambiata: reimportare prima di analizzare')
+        record = {'preview_sha256': digest}
         if encoder:
-            record['embedding'] = encoder.encode(path)
+            record['embedding'] = cache.get_or_compute(digest, 'embedding', encoder.identity, lambda: encoder.encode(path))
         if vision_tool:
-            record['faces'] = face_rectangles(vision_tool, path)
+            record['faces'] = cache.get_or_compute(digest, 'faces', vision_identity, lambda: face_rectangles(vision_tool, path))
         records[photo['id']] = record
-    evidence = {'schema_version': 1, 'model': encoder.identity if encoder else None, 'records': records,
+    evidence = {'schema_version': 1, 'model': encoder.identity if encoder else None, 'records': records, 'comparisons': comparison_suggestions(records),
                 'warning': 'Evidenze non calibrate: nessuna foto esclusa automaticamente sulla base di questi segnali.'}
     with store.transaction() as db:
         latest = store.get(sid, db)
         store.check_revision(latest, revision)
-        if latest['status'] != 'ready':
+        if latest['status'] != expected_status:
             raise ValueError('Servizio occupato: estrazione non applicata')
         latest['interpretations'] = evidence
+        latest.pop('confirmed_batch_id', None)
+        if job_revision is not None:
+            latest['status'] = 'ready'
+            latest['job'] = {'kind': 'features', 'status': 'completed', 'completed': len(records), 'total': len(records), 'error': None}
         latest['revision'] += 1
         store.put(db, latest)
     return evidence

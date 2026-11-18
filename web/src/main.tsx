@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client';
-import { useEffect, useState, type CSSProperties } from 'react';
-import { api, ApiError, photoPath, servicePath, type Plan, type Photo, type State, type Service, type Summary, type Settings, type Preset } from './api';
+import { useEffect, useRef, useCallback, useState, type CSSProperties } from 'react';
+import { api, ApiError, photoPath, servicePath, type Plan, type Face, type Photo, type State, type Service, type Summary, type Settings, type Preset } from './api';
 import './style.css';
 
 const labels: Record<State,string> = {candidate:'Candidata',preferred:'Preferita',alternative:'Alternativa',excluded:'Esclusa',review:'Da rivedere'};
@@ -13,6 +13,7 @@ function Preview({service, photo, zoom}: {service:Service; photo:Photo; zoom?:nu
 
 export function App() {
   const [services,setServices] = useState<Summary[]>([]);
+  const [features,setFeatures]=useState(false);
   const [presets,setPresets] = useState<Preset[]>([]);
   const [service,setService] = useState<Service|null>(null);
   const [login,setLogin] = useState(false);
@@ -22,6 +23,7 @@ export function App() {
   async function load() {
     const [all,available] = await Promise.all([api<Summary[]>('/services'),api<Preset[]>('/presets')]);
     setServices(all); setPresets(available); setLogin(false);
+    void api<{features:boolean}>('/capabilities').then(x=>setFeatures(x.features)).catch(()=>setFeatures(false));
   }
   async function connect(value:string) {
     setBusy(true); setError('');
@@ -37,10 +39,13 @@ export function App() {
   },[]);
   async function refresh() {
     setError('');
-    try { await load(); if(service) await open(service.id); }
+    try { await load(); if(service) updateService(await api<Service>(servicePath(service.id))); }
     catch(e) { setError(message(e)); }
   }
+  const dirty=useRef(false);
+  const updateService=useCallback((next:Service)=>setService(prev=>prev?.id===next.id&&prev.revision<=next.revision?next:prev),[]);
   async function open(id:string) {
+    if(id!==service?.id&&dirty.current&&!window.confirm('Scartare i criteri non salvati?'))return;
     setBusy(true); setError('');
     try { setService(await api<Service>(servicePath(id))); }
     catch(e) { setError(message(e)); }
@@ -53,7 +58,7 @@ export function App() {
         <label className="service-switch">Servizio
           <select value={service?.id ?? ''} disabled={busy} onChange={e => {if(e.target.value)void open(e.target.value);}}>
             <option value="" disabled>{services.length ? 'Scegli un servizio' : 'Nessun servizio importato'}</option>
-            {services.map(item => <option key={item.id} value={item.id}>{item.title} · {item.photo_count} foto</option>)}
+            {services.map(item => <option key={item.id} value={item.id}>{item.title} · {item.photo_count} foto{item.archived?' · Archiviato':''}</option>)}
           </select>
         </label>
         <button onClick={refresh} disabled={busy}>Aggiorna</button>
@@ -67,7 +72,7 @@ export function App() {
         <p>Apri l’app dal plugin Lightroom oppure incolla il token di accesso.</p>
         <label>Token<input type="password" value={token} onChange={e=>setToken(e.target.value)} autoComplete="off" required/></label>
         <button className="primary" disabled={busy}>Accedi</button>
-      </form> : service ? <Workspace key={service.id} service={service} update={setService} presets={presets} setPresets={setPresets}/> :
+      </form> : service ? <Workspace key={service.id} service={service} update={updateService} presets={presets} setPresets={setPresets} dirty={dirty} refreshSummaries={load} features={features}/> :
       <section className="panel empty"><p className="eyebrow">Da Lightroom alla selezione</p>
         <h1>{services.length?'Apri un servizio':'Importa un servizio da Lightroom'}</h1>
         <p>{services.length?'Scegli un servizio nel menu in alto.':'In Lightroom seleziona le foto, esegui “Prepara servizio” e poi premi Aggiorna.'}</p>
@@ -76,9 +81,16 @@ export function App() {
   </div>;
 }
 
-function Workspace({service:s,update,presets,setPresets}:{service:Service;update:(s:Service)=>void;presets:Preset[];setPresets:(p:Preset[])=>void}) {
+function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,features}:{service:Service;update:(s:Service)=>void;presets:Preset[];setPresets:(p:Preset[])=>void;dirty:{current:boolean};refreshSummaries:()=>Promise<void>;features:boolean}) {
   const path=servicePath(s.id);
   const [draft,setDraft]=useState<Settings>(s.settings);
+  const [base,setBase]=useState(s.settings);
+
+  const [focused,setFocused]=useState('');
+  const [chronological,setChronological]=useState(false);
+  const [linked,setLinked]=useState(true);
+  const comparison=useRef<HTMLDivElement>(null);
+  const mirrored=useRef<HTMLElement|null>(null);
   const [pending,setPending]=useState(false);
   const [error,setError]=useState('');
   const [filter,setFilter]=useState<State|'all'>('all');
@@ -95,17 +107,47 @@ function Workspace({service:s,update,presets,setPresets}:{service:Service;update
   const [presetCriteria,setPresetCriteria]=useState('');
   const [presetBase,setPresetBase]=useState<Preset|null>(null);
   const [coverage,setCoverage]=useState<{photo:Photo;state:State;locked:boolean}|null>(null);
-  useEffect(()=>{if(!running(s)&&!plan)return;let current=true;const timer=window.setInterval(()=>{void api<Service>(path).then(next=>{if(current)update(next);}).catch(e=>{if(current)setError(message(e));});},1200);return()=>{current=false;clearInterval(timer);};},[path,s.status,s.job?.status,plan]);
-  const busy=pending||running(s);
-  const proposed=new Set(s.proposal?.selected??[]);
+  const planReceived=plan!==null&&s.receipts.some(r=>r.batch_id===plan.batch_id);
+  const confirmed=plan!==null&&s.confirmed_batch_id===plan.batch_id;
+  const polling=running(s)||Boolean(s.confirmed_batch_id);
+  useEffect(()=>{
+    if(!polling)return;
+    let current=true, requested=false;
+    const timer=window.setInterval(()=>{
+      if(requested)return;
+      requested=true;
+      void api<Service>(path).then(next=>{if(current)update(next);})
+        .catch(e=>{if(current)setError(message(e));}).finally(()=>{requested=false;});
+    },1200);
+    return()=>{current=false;clearInterval(timer);};
+  },[path,polling,s.revision,s.status,update]);
+  const busy=pending||running(s)||!!s.archived||s.status!=='ready';
+  const proposed=new Set([...(s.proposal?.selected??[]),...(s.proposal?.added_candidates??[])]);
   const decision=(p:Photo)=>s.decisions[p.id]??{state:s.proposal&&!proposed.has(p.id)?'alternative' as const:'candidate' as const,locked:false};
   const selectedIds=new Set(s.selected_ids??s.photos.filter(p=>['candidate','preferred','review'].includes(decision(p).state)).map(p=>p.id));
   const cameras=[...new Set(s.photos.map(p=>p.camera).filter(Boolean))];
   const photoMap=new Map(s.photos.map(p=>[p.id,p]));
+  const suggestions=new Map(s.interpretations?.comparisons?.map(x=>[x.photo_id,x.other_photo_id]));
   const groups=s.proposal?.groups??[];
   const groupMap=new Map(groups.flatMap(g=>g.members.map(id=>[id,g] as const)));
   const visible=s.photos.filter(p=>(filter==='all'||decision(p).state===filter)&&(!group||groupMap.get(p.id)?.id===group));
-  const draftChanged=JSON.stringify(draft)!==JSON.stringify(s.settings);
+  if(chronological)visible.sort((a,b)=>{
+    const time=(p:Photo)=>p.captured_at===null?Infinity:p.captured_at+(s.settings.camera_offsets[p.camera]??0);
+    return time(a)-time(b)||a.id.localeCompare(b.id);
+  });
+  const draftChanged=JSON.stringify(draft)!==JSON.stringify(base);
+  const settingsChanged=JSON.stringify(base)!==JSON.stringify(s.settings);
+  const staleDraft=settingsChanged&&draftChanged;
+  useEffect(()=>{
+    if(settingsChanged&&!draftChanged){setBase(s.settings);setDraft(s.settings);}
+  },[settingsChanged,draftChanged,s.settings]);
+  useEffect(()=>{
+    dirty.current=draftChanged;
+    if(!draftChanged)return;
+    const warn=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue='';};
+    window.addEventListener('beforeunload',warn);
+    return()=>{dirty.current=false;window.removeEventListener('beforeunload',warn);};
+  },[dirty,draftChanged]);
   const requestSettings=()=>({target:draft.target,preset_id:draft.preset_id,preset_version:draft.preset_version,mode:draft.mode,instructions:draft.instructions,camera_offsets:draft.camera_offsets});
   async function action(work:()=>Promise<void>) {
     setPending(true);setError('');
@@ -113,14 +155,61 @@ function Workspace({service:s,update,presets,setPresets}:{service:Service;update
     finally{setPending(false);}
   }
   async function save(start:boolean) {await action(async()=>{
+    if(staleDraft)return;
     let current=s;
-    if(draftChanged){current=await api<Service>(path+'/settings','PUT',{revision:s.revision,settings:requestSettings()});update(current);setDraft(current.settings);}
+    if(draftChanged){current=await api<Service>(path+'/settings','PUT',{revision:s.revision,settings:requestSettings()});update(current);setDraft(current.settings);setBase(current.settings);}
     if(start)update(await api<Service>(path+'/analyze','POST',{revision:current.revision}));
   });}
   async function decide(photo:Photo,state:State,locked:boolean,confirm_last=false){await action(async()=>{
     try{const next=await api<Service>(path+'/decisions/'+encodeURIComponent(photo.id),'PATCH',{revision:s.revision,state,locked,confirm_last}); update(next);setCoverage(null);}
     catch(e){if(e instanceof ApiError&&e.status===409&&!confirm_last&&(e.detail as {code?:string})?.code==='last_candidate'){setCoverage({photo,state,locked});return;}throw e;}
   });}
+  const changeHistory=(direction:'undo'|'redo')=>action(async()=>{
+    update(await api<Service>(path+'/'+direction,'POST',{revision:s.revision}));
+  });
+  const replace=(from:string,to:string)=>action(async()=>{
+    update(await api<Service>(path+'/replace','POST',{revision:s.revision,from_photo_id:from,to_photo_id:to}));
+  });
+  const archive=()=>action(async()=>{
+    update(await api<Service>(path+'/archive','PUT',{revision:s.revision,archived:!s.archived}));
+    await refreshSummaries();
+  });
+  function mirrorScroll(source:HTMLElement) {
+    if(!linked)return;
+    if(mirrored.current===source){mirrored.current=null;return;}
+    const target=Array.from(comparison.current?.querySelectorAll<HTMLElement>('.zoom')??[]).find(el=>el!==source);
+    if(!target)return;
+    const left=source.scrollLeft/Math.max(1,source.scrollWidth-source.clientWidth)*(target.scrollWidth-target.clientWidth);
+    const top=source.scrollTop/Math.max(1,source.scrollHeight-source.clientHeight)*(target.scrollHeight-target.clientHeight);
+    if(Math.abs(target.scrollLeft-left)<1&&Math.abs(target.scrollTop-top)<1)return;
+    mirrored.current=target;target.scrollLeft=left;target.scrollTop=top;
+  }
+  useEffect(()=>{
+    function onKey(e:KeyboardEvent) {
+      const element=e.target instanceof HTMLElement?e.target:null;
+      if(e.defaultPrevented||e.repeat||element?.closest('input,textarea,select,button,[contenteditable],dialog')||showRating||showCompare||presetEdit||coverage)return;
+      const key=e.key.toLowerCase();
+      if((e.metaKey||e.ctrlKey)&&key==='z'&&!e.altKey){
+        if(!busy&&(e.shiftKey?s.can_redo:s.can_undo)){e.preventDefault();void changeHistory(e.shiftKey?'redo':'undo');}
+        return;
+      }
+      if(e.metaKey||e.ctrlKey||e.altKey)return;
+      if(key==='v'&&compare.length===2){e.preventDefault();setZoom(100);setShowCompare(true);return;}
+      const cards=visible.slice(0,limit);
+      const index=cards.findIndex(p=>p.id===focused);
+      if(key==='arrowleft'||key==='arrowright'){
+        const photo=cards[Math.min(cards.length-1,Math.max(0,index+(key==='arrowleft'?-1:1)))];
+        if(photo){e.preventDefault();document.getElementById('photo-'+photo.id)?.focus();}
+        return;
+      }
+      const photo=cards[index];
+      if(!photo)return;
+      if(key==='c'){e.preventDefault();chooseCompare(photo.id);}
+      if(!busy&&(key==='m'||key==='x')){e.preventDefault();void decide(photo,key==='m'?'candidate':'excluded',decision(photo).locked);}
+    }
+    window.addEventListener('keydown',onKey);
+    return()=>window.removeEventListener('keydown',onKey);
+  });
   function chooseCompare(id:string){setCompare(prev=>prev.includes(id)?prev.filter(x=>x!==id):prev.length===2?[prev[1],id]:[...prev,id]);}
   function editPreset(base:Preset|null){setPresetBase(base);setPresetName(base?.name??'');setPresetCriteria(base?.criteria.join('\n')??'');setPresetEdit(true);}
   async function savePreset(){await action(async()=>{const values={name:presetName.trim(),criteria:presetCriteria.split('\n').map(x=>x.trim()).filter(Boolean)};const p=presetBase?await api<Preset>('/presets/'+encodeURIComponent(presetBase.id),'PUT',{...values,version:presetBase.version}):await api<Preset>('/presets','POST',values);setPresets([...presets.filter(x=>x.id!==p.id),p]);setPresetEdit(false);});}
@@ -131,12 +220,14 @@ function Workspace({service:s,update,presets,setPresets}:{service:Service;update
     <div className="workspace">
       <header className="top">
         <div className="service-heading"><p className="eyebrow">Servizio importato</p><h1>{s.title}</h1><p className="selection-count">{selectedIds.size} candidate su {s.photos.length} foto</p></div>
-        <button className="primary" disabled={busy||s.proposal?.stale||!selectedIds.size||draftChanged||s.status!=='ready'} onClick={()=>{setPlan(null);setShowRating(true);}}>Rivedi le stelle <span aria-hidden="true">→</span></button>
+        <div className="run-actions"><button disabled={pending||running(s)||draftChanged||s.status!=='ready'} onClick={()=>void archive()}>{s.archived?'Riapri servizio':'Archivia servizio'}</button>
+        <button className="primary" disabled={busy||s.requires_analysis||s.proposal?.stale||!selectedIds.size||draftChanged||s.status!=='ready'} onClick={()=>{setPlan(null);setShowRating(true);}}>Rivedi le stelle <span aria-hidden="true">→</span></button></div>
       </header>
       <section className="gallery" aria-label="Area di revisione">
         {error&&<p role="alert" className="warning">{error}</p>}
+        {s.archived&&<p role="status" className="warning">Servizio archiviato. Riaprilo per continuare la revisione.</p>}
         {s.status==='applying'&&<p role="status" className="warning">Applicazione stelle in corso. Completa o riprendi dal plugin.</p>}
-        {s.proposal?.stale&&<p className="warning">I criteri sono cambiati. Riavvia la selezione per aggiornare la proposta.</p>}
+        {(s.requires_analysis||s.proposal?.stale)&&<p className="warning">Il servizio è cambiato. Riavvia la selezione per aggiornare la proposta.</p>}
         {s.proposal?.warnings.map((w,i)=><p key={i} className="warning">{w}</p>)}
         {selectedIds.size<s.settings.target&&<p className="warning">La revisione corrente è sotto il numero richiesto ({s.settings.target}).</p>}
         <div className="reviewhead">
@@ -148,11 +239,17 @@ function Workspace({service:s,update,presets,setPresets}:{service:Service;update
             <button disabled={compare.length!==2} onClick={()=>{setZoom(100);setShowCompare(true);}}>Confronta ({compare.length}/2)</button>
           </div>
         </div>
+        <div className="review-history">
+          <button disabled={busy||!s.can_undo} onClick={()=>void changeHistory('undo')}>Annulla decisione</button>
+          <button disabled={busy||!s.can_redo} onClick={()=>void changeHistory('redo')}>Ripristina decisione</button>
+          <label className="check"><input type="checkbox" checked={chronological} onChange={e=>setChronological(e.target.checked)}/>Ordine cronologico</label>
+          <details><summary>Scorciatoie</summary><p>← → Naviga · M Mantieni · X Escludi · C Seleziona per confronto · V Apri confronto · ⌘Z Annulla · ⇧⌘Z Ripristina</p></details>
+        </div>
         {visible.length===0&&<p className="empty-filter">Nessuna foto corrisponde ai filtri.</p>}
         <div className="grid" style={{'--thumbnail-size': `${thumbnailSize}px`} as CSSProperties}>
           {visible.slice(0,limit).map((photo,index)=>{
-            const d=decision(photo);const g=groupMap.get(photo.id);
-            return <article className={'card state-'+d.state+(compare.includes(photo.id)?' is-compared':'')} key={photo.id}>
+            const d=decision(photo);const g=groupMap.get(photo.id);const suggestion=suggestions.get(photo.id);
+            return <article className={'card state-'+d.state+(compare.includes(photo.id)?' is-compared':'')} key={photo.id} id={'photo-'+photo.id} tabIndex={0} onFocus={()=>setFocused(photo.id)}>
               <div className="photo-topline"><span>{String(index+1).padStart(2,'0')}</span><span>{labels[d.state]}{d.locked?' · Bloccata':''}</span></div>
               <Preview service={s} photo={photo}/>
               <div className="cardbody">
@@ -163,10 +260,12 @@ function Workspace({service:s,update,presets,setPresets}:{service:Service;update
                   <select id={'state-'+photo.id} value={d.state} disabled={busy} onChange={e=>void decide(photo,e.target.value as State,d.locked)}>{states.map(x=><option key={x} value={x}>{labels[x]}</option>)}</select>
                   <label className="check"><input type="checkbox" checked={d.locked} disabled={busy} onChange={e=>void decide(photo,d.state,e.target.checked)}/>Blocca</label>
                 </div>
+                {suggestion&&photoMap.has(suggestion)&&<button className="text-button" onClick={()=>{setCompare([photo.id,suggestion]);setZoom(100);setShowCompare(true);}}>Confronto suggerito</button>}
                 <div className="photo-footer"><label className="check"><input type="checkbox" checked={compare.includes(photo.id)} onChange={()=>chooseCompare(photo.id)}/>Confronta</label>
                   {(g||s.proposal?.reasons[photo.id])&&<details className="photo-reason"><summary>Motivo</summary>
-                    {g&&<p>{g.representative===photo.id?'Rappresentante del gruppo':('Rappresentata da '+(photoMap.get(g.representative)?.filename??'altra foto'))}</p>}
+                    {g&&<p>{!g.representative?'Gruppo senza candidate':g.representative===photo.id?'Rappresentante del gruppo':('Rappresentata da '+(photoMap.get(g.representative)?.filename??'altra foto'))}</p>}
                     <p>{s.proposal?.reasons[photo.id]??g?.reason}</p>
+                    {g?.representative&&selectedIds.has(g.representative)&&!selectedIds.has(photo.id)&&!d.locked&&!s.decisions[g.representative]?.locked&&<button disabled={busy} onClick={()=>void replace(g.representative!,photo.id)}>Sostituisci la rappresentante</button>}
                   </details>}
                 </div>
               </div>
@@ -179,7 +278,8 @@ function Workspace({service:s,update,presets,setPresets}:{service:Service;update
       <aside className="inspector" aria-label="Strumenti di selezione">
         <form className="config" onSubmit={e=>{e.preventDefault();void save(true);}}>
           <div className="panel-heading"><h2>Configura la selezione</h2>{draftChanged&&<span className="unsaved" role="status">Da salvare</span>}</div>
-          <fieldset disabled={busy}>
+          {staleDraft&&<p role="alert" className="warning">I criteri salvati sono cambiati. <button type="button" onClick={()=>{setBase(s.settings);setDraft(s.settings);}}>Carica i criteri salvati</button></p>}
+          <fieldset disabled={busy||staleDraft}>
             <div className="tool-section target-section">
               <div className="target-heading"><label htmlFor="target-count">Numero di candidate</label><input id="target-count" type="number" min={1} max={s.photos.length} value={Number.isNaN(draft.target)?'':draft.target} required onChange={e=>setDraft({...draft,target:e.target.valueAsNumber})}/></div>
               <input aria-label="Regola numero di candidate" aria-describedby="target-help" type="range" min={1} max={s.photos.length} step={1} value={Number.isFinite(draft.target)?Math.min(s.photos.length,Math.max(1,draft.target)):1} onChange={e=>setDraft({...draft,target:e.target.valueAsNumber})}/>
@@ -200,20 +300,41 @@ function Workspace({service:s,update,presets,setPresets}:{service:Service;update
               <label>Istruzioni per questo servizio<textarea rows={4} value={draft.instructions} onChange={e=>setDraft({...draft,instructions:e.target.value})}/></label>
               <p className="hint">Il motore attuale non interpreta il testo libero: usalo come riferimento per la revisione manuale.</p>
             </details>
-            {cameras.length>0&&<details className="tool-section disclosure"><summary>Sincronizzazione fotocamere</summary><p className="hint">Offset in secondi, solo nell’app. Non ancora utilizzati dal motore iniziale.</p><div className="camera-fields">{cameras.map(c=><label key={c}>{c}<input type="number" step="1" value={draft.camera_offsets[c]??0} onChange={e=>setDraft({...draft,camera_offsets:{...draft.camera_offsets,[c]:Number(e.target.value)}})}/></label>)}</div></details>}
+            {cameras.length>0&&<details className="tool-section disclosure"><summary>Sincronizzazione fotocamere</summary><p className="hint">Offset in secondi applicati all’ordine cronologico nella web app.</p><div className="camera-fields">{cameras.map(c=><label key={c}>{c}<input type="number" step="1" value={draft.camera_offsets[c]??0} onChange={e=>setDraft({...draft,camera_offsets:{...draft.camera_offsets,[c]:Number(e.target.value)}})}/></label>)}</div></details>}
             <div className="tool-section run-section"><div className="run-actions"><button type="button" disabled={!draftChanged||!valid} onClick={()=>void save(false)}>Salva criteri</button><button className="primary" disabled={!valid||draft.mode!=='local'||s.status!=='ready'}>Avvia selezione</button></div><p className="hint">Raggruppamento di anteprime identiche. Scene e persone non ancora riconosciute.</p></div>
           </fieldset>
         </form>
-        {s.criteria.length>0&&<details className="tool-section disclosure criteria-status"><summary>Verifica dei criteri<span className="detail-tag">{s.criteria.filter(c=>c.status!=='supported').length} da verificare</span></summary><ul>{s.criteria.map((c,i)=><li key={i}><strong>{c.text}</strong><span className="criterion-status">{({partial:'Parzialmente supportato',unsupported:'Non supportato',supported:'Supportato',ambiguous:'Ambiguo'} as Record<string,string>)[c.status]??c.status}</span><p>{c.reason}</p></li>)}</ul></details>}
+        {s.criteria.length>0&&<details className="tool-section disclosure criteria-status"><summary>Verifica dei criteri<span className="detail-tag">{s.criteria.filter(c=>c.status!=='supported').length} da verificare</span></summary><ul>{s.criteria.map((c,i)=><li key={i}><strong>{c.text}</strong><span className="criterion-status">{({partial:'Parzialmente supportato',unsupported:'Non applicato',supported:'Supportato',ambiguous:'Ambiguo'} as Record<string,string>)[c.status]??c.status}</span><p>{c.reason}</p></li>)}</ul></details>}
+        {features&&<section className="tool-section"><button disabled={busy} onClick={()=>void action(async()=>update(await api<Service>(path+'/features','POST',{revision:s.revision})))}>Analizza dettagli locali</button></section>}
         {s.job&&<section className="tool-section job-status" aria-live="polite"><h2>Analisi locale</h2><p>{({running:'In corso',queued:'In coda',completed:'Completata',interrupted:'Interrotta',failed:'Non riuscita'} as Record<string,string>)[s.job.status]??s.job.status} · {s.job.completed} / {s.job.total}</p>{s.job.status==='running'&&<progress value={s.job.completed} max={s.job.total||1}/>} {s.job.error&&<p className="warning">{s.job.error}</p>}</section>}
         {s.receipts.length>0&&<section className="tool-section"><h2>Esiti Lightroom</h2>{s.receipts.map(r=><details key={r.batch_id}><summary>{r.results.filter(i=>i.status==='applied').length} stelle applicate · {r.results.length} foto verificate</summary><ul>{r.results.map(i=><li key={i.photo_id}>{photoMap.get(i.photo_id)?.filename??i.photo_id}: {({applied:'Applicata',skipped:'Saltata',conflict:'Conflitto',uncertain:'Da verificare'} as Record<string,string>)[i.status]??i.status} — {i.reason}</li>)}</ul></details>)}</section>}
       </aside>
     </div>
-    {showCompare&&<Modal title="Confronta le anteprime" close={()=>setShowCompare(false)}><label>Zoom {zoom}%<input type="range" min={100} max={300} step={10} value={zoom} onChange={e=>setZoom(e.target.valueAsNumber)}/></label><div className="comparison">{compare.map(id=>{const p=photoMap.get(id);return p&&<figure key={id}><Preview service={s} photo={p} zoom={zoom}/><figcaption>{p.filename}</figcaption></figure>;})}</div></Modal>}
-    {showRating&&<Modal title="Rivedi le stelle" close={()=>setShowRating(false)}><p>{selectedIds.size} candidate su {s.photos.length} foto. {s.proposal?'La proposta include le decisioni manuali.':'Selezione manuale, nessuna analisi eseguita.'}</p><p>Il plugin può assegnare una stella alle candidate idonee con zero stelle. Prima dell’applicazione occorre verificare che la scrittura automatica dei metadati su file sia disabilitata.</p>{plan?<><p role="status"><strong>{plan.items.length} modifiche proposte</strong> · revisione {plan.revision}</p>{plan.warnings.map((w,i)=><p className="warning" key={i}>{w}</p>)}{plan.items.length>0&&<><p>Apri “Applica stelle” nel plugin con il catalogo del servizio. Controlla la scrittura automatica dei metadati e conferma il riepilogo in Lightroom.</p><ul className="planlist">{plan.items.map(i=><li key={i.photo_id}>{photoMap.get(i.photo_id)?.filename??i.photo_id} · ID {i.local_id} · {i.expected_rating} → 1 ★</li>)}</ul></>}</>:<button className="primary" disabled={busy} onClick={()=>void action(async()=>setPlan(await api<Plan>(path+'/rating-plan','POST',{revision:s.revision})))}>Prepara anteprima delle modifiche</button>}{error&&<p role="alert" className="warning">{error}</p>}</Modal>}
+    {showCompare&&<Modal title="Confronta le anteprime" close={()=>setShowCompare(false)}><p className="hint">Zoom relativo alla vista. Le anteprime possono non bastare per valutare la nitidezza dell’originale.</p><label>Zoom {zoom}%<input type="range" min={100} max={300} step={10} value={zoom} onChange={e=>setZoom(e.target.valueAsNumber)}/></label><label className="check"><input type="checkbox" checked={linked} onChange={e=>{mirrored.current=null;setLinked(e.target.checked);}}/>Collega scorrimento</label><div className="comparison" ref={comparison}>{compare.map(id=>{const p=photoMap.get(id);return p&&<ComparisonPhoto key={id} service={s} photo={p} zoom={zoom} onScroll={mirrorScroll}/>;})}</div></Modal>}
+    {showRating&&<Modal title="Rivedi le stelle" close={()=>setShowRating(false)}><p>{selectedIds.size} candidate su {s.photos.length} foto. {s.proposal?'La proposta include le decisioni manuali.':'Selezione manuale, nessuna analisi eseguita.'}</p><p>Il plugin può assegnare una stella alle candidate idonee con zero stelle. Prima dell’applicazione occorre verificare che la scrittura automatica dei metadati su file sia disabilitata.</p>{plan?<><p role="status"><strong>{plan.items.length} modifiche proposte</strong> · revisione {plan.revision}</p>{plan.warnings.map((w,i)=><p className="warning" key={i}>{w}</p>)}{plan.items.length>0&&<><p>Conferma questo elenco e apri “Applica stelle” nel plugin. Controlla la scrittura automatica dei metadati e conferma in Lightroom.</p><ul className="planlist">{plan.items.map(i=><li key={i.photo_id}>{i.filename??photoMap.get(i.photo_id)?.filename??i.photo_id} · ID {i.local_id} · {i.expected_rating} → 1 ★</li>)}</ul>{planReceived?<p role="status">Operazione registrata. Consulta Esiti Lightroom.</p>:plan.revision!==s.revision?<p role="alert">Piano superato. Chiudi e prepara una nuova anteprima.</p>:confirmed?<p role="status">Piano confermato · {plan.batch_id}</p>:<button className="primary" disabled={busy||draftChanged} onClick={()=>void action(async()=>{await api(path+'/rating-plan/confirm','POST',{batch_id:plan.batch_id});update(await api<Service>(path));})}>Conferma elenco per Lightroom</button>}</>}</>:<button className="primary" disabled={busy} onClick={()=>void action(async()=>setPlan(await api<Plan>(path+'/rating-plan','POST',{revision:s.revision})))}>Prepara anteprima delle modifiche</button>}{error&&<p role="alert" className="warning">{error}</p>}</Modal>}
     {presetEdit&&<Modal title={presetBase?'Modifica preset':'Nuovo preset'} close={()=>setPresetEdit(false)}><form onSubmit={e=>{e.preventDefault();void savePreset();}}><label>Nome<input value={presetName} onChange={e=>setPresetName(e.target.value)} required/></label><label>Criteri, uno per riga<textarea rows={5} value={presetCriteria} onChange={e=>setPresetCriteria(e.target.value)}/></label><p>I servizi esistenti mantengono la revisione salvata.</p><button className="primary" disabled={busy||!presetName.trim()}>Salva preset</button>{error&&<p role="alert" className="warning">{error}</p>}</form></Modal>}
     {coverage&&<Modal title="Ultima candidata del gruppo" close={()=>setCoverage(null)}><p>Questo gruppo rimarrà senza candidate dopo la modifica di {coverage.photo.filename}.</p><button className="primary" disabled={busy} onClick={()=>void decide(coverage.photo,coverage.state,coverage.locked,true)}>Conferma modifica</button>{error&&<p role="alert" className="warning">{error}</p>}</Modal>}
   </>;
+}
+function ComparisonPhoto({service,photo,zoom,onScroll}:{service:Service;photo:Photo;zoom:number;onScroll:(el:HTMLElement)=>void}) {
+  const [size,setSize]=useState<{width:number;height:number}|null>(null);
+  const faces=service.interpretations?.records[photo.id]?.faces?.observations?.filter(validFace)??[];
+  return <figure>
+    <div className="preview zoom" tabIndex={0} aria-label={'Scorri l’anteprima di '+photo.filename} onScroll={e=>onScroll(e.currentTarget)}>
+      {photo.preview_ready?<img src={'/api'+photoPath(service.id,photo.id)+'/preview'} style={{width:zoom+'%',maxWidth:'none'}} alt={photo.filename}
+        onLoad={e=>setSize({width:e.currentTarget.naturalWidth,height:e.currentTarget.naturalHeight})}/>:<span>Anteprima non disponibile</span>}
+    </div>
+    <figcaption>{photo.filename}{size&&<span className="hint"> · Anteprima {size.width} × {size.height} px</span>}</figcaption>
+    {photo.preview_ready&&size&&faces.length>0&&<details className="face-details"><summary>Dettagli dei volti rilevati</summary>
+      <div className="face-crops">{faces.map((face,i)=><div className="face-crop" key={i} style={{aspectRatio:face.width*size.width/(face.height*size.height)}}>
+        <img alt={'Volto rilevato '+(i+1)} src={'/api'+photoPath(service.id,photo.id)+'/preview'} loading="lazy" style={{width:100/face.width+'%',height:100/face.height+'%',left:-100*face.x/face.width+'%',top:-100*(1-face.y-face.height)/face.height+'%'}}/>
+      </div>)}</div>
+      <p className="hint">Volti rilevati localmente, non identificati. Il rilevamento può omettere persone.</p>
+    </details>}
+  </figure>;
+}
+function validFace(face:Face) {
+  return [face.x,face.y,face.width,face.height].every(Number.isFinite)&&face.x>=0&&face.y>=0&&face.width>0&&face.height>0&&face.x+face.width<=1.001&&face.y+face.height<=1.001;
 }
 function Modal({title,close,children}:{title:string;close:()=>void;children:React.ReactNode}) {
   const [dialog,setDialog]=useState<HTMLDialogElement|null>(null);
