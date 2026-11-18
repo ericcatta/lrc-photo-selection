@@ -5,6 +5,7 @@
 - Backend/API e simulazione SDK Lua 5.1: **32 test passati** (`.venv/bin/python -m pytest -q`).
 - Componenti React in DOM simulato: **6 test passati** (`npm --prefix web test`).
 - Build TypeScript/Vite completata; controllo dipendenze Python superato.
+- Prova HTTP con server reale su loopback e sei anteprime sintetiche: asset compilati, autenticazione cookie, importazione, selezione conservativa (5 candidate per target 3) e piano di 4 rating idonei verificati. Server temporaneo arrestato dopo la prova.
 - Apple Vision compilato con Swift e provato su un'immagine sintetica uniforme: nessun volto rilevato, nessun errore.
 - Nessuna fotografia personale utilizzata nei test. Nessun catalogo letto tramite SQL o modificato direttamente.
 
