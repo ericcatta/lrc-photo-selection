@@ -10,7 +10,7 @@ Prima selezione fotografica locale per Lightroom Classic, con priorità alla cop
 - Confronto con scorrimento collegato, risoluzione anteprima, scorciatoie e ordine cronologico con offset fotocamera. Il comando «Mostra le candidate» seleziona temporaneamente le foto in Lightroom senza aggiungere metadati.
 - Motore iniziale funzionante e prudente: raggruppa soltanto anteprime JPEG identiche. Non riconosce ancora persone, scene o pose; non promette una riduzione a 500.
 - Analisi locale esplicita con Apple Vision compilato e SigLIP 2 opzionale configurato: cache riprendibile, ritagli dei volti e suggerimenti di confronto. Non influenza le esclusioni; nessun modello scaricato automaticamente. SigLIP non ancora provato su fotografie reali.
-- Passaggio OpenAI disponibile con selezione del campione, stima, budget per servizio e conferma esplicita prima di ogni piano di invio; collaudato con trasporto simulato, non ancora con richieste reali. Nessuna chiave API necessaria per il flusso locale.
+- Passaggio OpenAI disponibile con selezione del campione, stima, limite prudenziale del piano, budget complessivo facoltativo e conferma esplicita prima di ogni piano di invio; collaudato con trasporto simulato, non ancora con richieste reali. Nessuna chiave API necessaria per il flusso locale.
 - Test automatici con dati sintetici; verifica reale Lightroom ancora da eseguire sul catalogo di prova indicato dall'utente. Il catalogo principale non autorizzato non viene usato nei test; non esiste un blocco per anno nel prodotto.
 
 ## Installazione sul Mac
@@ -98,4 +98,4 @@ Sul Mac Apple Silicon: installare `.venv/bin/pip install -e '.[local-instruction
 
 Scegli un preset per copiare i suoi criteri e modificarli nel servizio, oppure parti senza preset e scrivi direttamente le istruzioni. L’analisi restituisce una proposta da rivedere. Confermarla modifica soltanto la selezione locale; le stelle richiedono ancora il piano e la conferma separata in Lightroom.
 
-La sezione OpenAI salva la chiave nel portachiavi e permette di scegliere il modello da una lista aggiornabile dall’account. Il flusso ibrido richiede stima e conferma esplicita del campione e del budget; non invia automaticamente foto. Istruzioni originali preservate, consumi e riserve persistenti, ripresa con nuova conferma. Dettagli in [docs/openai.md](docs/openai.md).
+La sezione OpenAI salva la chiave nel portachiavi e permette di scegliere il modello da una lista aggiornabile dall’account. Il flusso OpenAI può partire direttamente dalle anteprime importate o dalla proposta locale e richiede stima e conferma esplicita del campione e del limite prudenziale; non invia automaticamente foto. Istruzioni originali preservate, consumi e riserve persistenti, ripresa con nuova conferma. Dettagli in [docs/openai.md](docs/openai.md).

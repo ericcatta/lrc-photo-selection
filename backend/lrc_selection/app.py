@@ -245,9 +245,9 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
                 'Quantità superata: mancano evidenze sufficienti per ridurre altre immagini in sicurezza.',
             }
             proposal['warnings'] = [w for w in proposal['warnings'] if w not in quantity_warnings]
-            if len(selected) < service['settings']['target']:
+            if 'shortlist' not in proposal and len(selected) < service['settings']['target']:
                 proposal['warnings'].append('Quantità non raggiungibile senza cambiare decisioni manuali: revisione necessaria.')
-            elif len(selected) > service['settings']['target']:
+            elif 'shortlist' not in proposal and len(selected) > service['settings']['target']:
                 proposal['warnings'].append('Quantità superata: mancano evidenze sufficienti per ridurre altre immagini in sicurezza.')
             for pid, decision in service['decisions'].items():
                 proposal['reasons'][pid] = 'Decisione manuale: ' + {'candidate': 'candidata', 'preferred': 'preferita', 'review': 'da rivedere', 'excluded': 'esclusa', 'alternative': 'alternativa'}[decision['state']] + '.'

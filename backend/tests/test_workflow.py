@@ -405,3 +405,19 @@ def test_optional_preset_copy_can_be_edited_removed_and_reloaded(client):
     s = configure(client, s, preset_id='', service_criteria=[], subject_query='')
     assert s['settings']['preset_snapshot'] is None
     assert s['settings']['preset_version'] == 0
+
+
+def test_review_shortlist_does_not_warn_about_unaccepted_candidate_count(client):
+    service = imported(client)
+    store = client.app.state.store
+    with store.transaction() as db:
+        s = store.get(service['id'], db)
+        from lrc_selection.engine import analyze
+        s['settings']['target'] = 1
+        s['proposal'] = analyze(s)
+        s['proposal']['shortlist'] = [s['photos'][0]['id']]
+        s['proposal']['warnings'] = ['Copertura categoria ritratti da verificare.']
+        store.put(db, s)
+    result = detail(client)
+    assert len(result['selected_ids']) == 4  # Review proposal has not applied exclusions.
+    assert result['proposal']['warnings'] == ['Copertura categoria ritratti da verificare.']

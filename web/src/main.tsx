@@ -85,10 +85,16 @@ export function App() {
   </div>;
 }
 
+function unifiedSettings(settings:Settings):Settings {
+  const criteria=settings.service_criteria??settings.preset_snapshot?.criteria??[];
+  const additions=[...criteria,...(settings.subject_query?[`Soggetto da privilegiare: ${settings.subject_query}`]:[])];
+  return {...settings,instructions:settings.instructions+(additions.length?(settings.instructions?'\n\n':'')+additions.join('\n'):''),service_criteria:[],subject_query:''};
+}
+
 function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,features,instructionsAvailable}:{service:Service;update:(s:Service)=>void;presets:Preset[];setPresets:(p:Preset[])=>void;dirty:{current:boolean};refreshSummaries:()=>Promise<void>;features:boolean;instructionsAvailable:boolean}) {
   const path=servicePath(s.id);
-  const [draft,setDraft]=useState<Settings>(s.settings);
-  const [base,setBase]=useState(s.settings);
+  const [draft,setDraft]=useState<Settings>(()=>unifiedSettings(s.settings));
+  const [base,setBase]=useState(()=>unifiedSettings(s.settings));
 
   const [focused,setFocused]=useState('');
   const [chronological,setChronological]=useState(false);
@@ -113,8 +119,6 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
   const [showAccept,setShowAccept]=useState(false);
   const [presetEdit,setPresetEdit]=useState(false);
   const [presetName,setPresetName]=useState('');
-  const [presetCriteria,setPresetCriteria]=useState('');
-  const [presetQuery,setPresetQuery]=useState('');
   const [presetInstructions,setPresetInstructions]=useState('');
   const [presetBase,setPresetBase]=useState<Preset|null>(null);
   const [coverage,setCoverage]=useState<{photo:Photo;state:State;locked:boolean}|null>(null);
@@ -147,11 +151,12 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
     const time=(p:Photo)=>p.captured_at===null?Infinity:p.captured_at+(s.settings.camera_offsets[p.camera]??0);
     return time(a)-time(b)||a.id.localeCompare(b.id);
   });
-  const draftChanged=JSON.stringify(draft)!==JSON.stringify(base);
-  const settingsChanged=JSON.stringify(base)!==JSON.stringify(s.settings);
+  const needsUnifiedSave=Boolean((s.settings.service_criteria??s.settings.preset_snapshot?.criteria??[]).length||s.settings.subject_query);
+  const draftChanged=JSON.stringify(draft)!==JSON.stringify(base)||needsUnifiedSave;
+  const settingsChanged=JSON.stringify(base)!==JSON.stringify(unifiedSettings(s.settings));
   const staleDraft=settingsChanged&&draftChanged;
   useEffect(()=>{
-    if(settingsChanged&&!draftChanged){setBase(s.settings);setDraft(s.settings);}
+    if(settingsChanged&&!draftChanged){setBase(unifiedSettings(s.settings));setDraft(unifiedSettings(s.settings));}
   },[settingsChanged,draftChanged,s.settings]);
   useEffect(()=>{
     dirty.current=draftChanged;
@@ -160,7 +165,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
     window.addEventListener('beforeunload',warn);
     return()=>{dirty.current=false;window.removeEventListener('beforeunload',warn);};
   },[dirty,draftChanged]);
-  const requestSettings=()=>({target:draft.target,preset_id:draft.preset_id,preset_version:draft.preset_version,mode:draft.mode,instructions:draft.instructions,subject_query:draft.subject_query??'',service_criteria:(draft.service_criteria??draft.preset_snapshot?.criteria??[]).map(x=>x.trim()).filter(Boolean),camera_offsets:draft.camera_offsets});
+  const requestSettings=()=>({target:draft.target,preset_id:draft.preset_id,preset_version:draft.preset_version,mode:draft.mode,instructions:draft.instructions,subject_query:'',service_criteria:[],camera_offsets:draft.camera_offsets});
   async function action(work:()=>Promise<void>) {
     setPending(true);setError('');
     try{await work();}catch(e){setError(message(e));if(e instanceof ApiError&&e.status===409){try{const latest=await api<Service>(path);update(latest);}catch{ /* preserve original error */ }}}
@@ -169,7 +174,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
   async function save(start:boolean) {await action(async()=>{
     if(staleDraft)return;
     let current=s;
-    if(draftChanged){current=await api<Service>(path+'/settings','PUT',{revision:s.revision,settings:requestSettings()});update(current);setDraft(current.settings);setBase(current.settings);}
+    if(draftChanged){current=await api<Service>(path+'/settings','PUT',{revision:s.revision,settings:requestSettings()});update(current);setDraft(unifiedSettings(current.settings));setBase(unifiedSettings(current.settings));}
     if(start)update(await api<Service>(path+'/analyze','POST',{revision:current.revision}));
   });}
   async function decide(photo:Photo,state:State,locked:boolean,confirm_last=false){await action(async()=>{
@@ -223,17 +228,19 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
     return()=>window.removeEventListener('keydown',onKey);
   });
   function chooseCompare(id:string){setCompare(prev=>prev.includes(id)?prev.filter(x=>x!==id):prev.length===2?[prev[1],id]:[...prev,id]);}
-  function editPreset(base:Preset|null){setPresetBase(base);setPresetName(base?.name??'');setPresetCriteria((draft.service_criteria??draft.preset_snapshot?.criteria??[]).join('\n'));setPresetQuery(draft.subject_query??'');setPresetInstructions(draft.instructions);setPresetEdit(true);}
-  async function savePreset(){await action(async()=>{const values={name:presetName.trim(),subject_query:presetQuery,instructions:presetInstructions,criteria:presetCriteria.split('\n').map(x=>x.trim()).filter(Boolean)};const p=presetBase?await api<Preset>('/presets/'+encodeURIComponent(presetBase.id),'PUT',{...values,version:presetBase.version}):await api<Preset>('/presets','POST',values);setPresets([...presets.filter(x=>x.id!==p.id),p]);applyPreset(p);setPresetEdit(false);});}
+  function editPreset(base:Preset|null){setPresetBase(base);setPresetName(base?.name??'');setPresetInstructions(draft.instructions);setPresetEdit(true);}
+  async function savePreset(){await action(async()=>{const values={name:presetName.trim(),subject_query:'',instructions:presetInstructions,criteria:[]};const p=presetBase?await api<Preset>('/presets/'+encodeURIComponent(presetBase.id),'PUT',{...values,version:presetBase.version}):await api<Preset>('/presets','POST',values);setPresets([...presets.filter(x=>x.id!==p.id),p]);applyPreset(p);setPresetEdit(false);});}
   const offer=presets.find(p=>p.id+':'+p.version===presetChoice);
-  const serviceCriteria=draft.service_criteria??draft.preset_snapshot?.criteria??[];
-  function applyPreset(p:Preset){setPresetChoice(p.id+':'+p.version);setDraft({...draft,preset_id:p.id,preset_version:p.version,preset_snapshot:p,service_criteria:[...p.criteria],subject_query:p.subject_query??'',instructions:p.instructions??''});}
+  function applyPreset(p:Preset){setPresetChoice(p.id+':'+p.version);setDraft(unifiedSettings({...draft,preset_id:p.id,preset_version:p.version,preset_snapshot:p,service_criteria:[...p.criteria],subject_query:p.subject_query??'',instructions:p.instructions??''}));}
   const snapshot=draft.preset_snapshot;
+  const analysisInProgress=s.status==='analyzing'||s.job?.status==='running'||s.job?.status==='queued';
+  const outdatedProposal=Boolean(s.requires_analysis||s.proposal?.stale||draftChanged);
+  const currentProposal=!analysisInProgress&&!outdatedProposal;
   const valid=Number.isInteger(draft.target)&&draft.target>=1&&draft.target<=s.photos.length;
   return <>
     <div className="workspace">
       <header className="top">
-        <div className="service-heading"><p className="eyebrow">Servizio importato</p><h1>{s.title}</h1><p className="selection-count">{s.proposal?.shortlist&&!s.proposal.shortlist_accepted ? `${shortlist.size} proposte da rivedere · ${s.photos.length} foto disponibili` : `${selectedIds.size} candidate su ${s.photos.length} foto`}</p></div>
+        <div className="service-heading"><p className="eyebrow">Servizio importato</p><h1>{s.title}</h1><p className="selection-count">{!currentProposal&&s.proposal?'Risultati precedenti · ':''}{s.proposal?.shortlist&&!s.proposal.shortlist_accepted ? `${shortlist.size} proposte da rivedere · ${s.photos.length} foto disponibili` : `${selectedIds.size} candidate su ${s.photos.length} foto`}</p></div>
         <div className="run-actions"><button disabled={pending||running(s)||draftChanged||s.status!=='ready'} onClick={()=>void archive()}>{s.archived?'Riapri servizio':'Archivia servizio'}</button>
         <button className="primary" disabled={busy||Boolean(s.proposal?.shortlist&&!s.proposal.shortlist_accepted)||s.requires_analysis||s.proposal?.stale||!selectedIds.size||draftChanged||s.status!=='ready'} onClick={()=>{setPlan(null);setShowRating(true);}}>Rivedi le stelle <span aria-hidden="true">→</span></button></div>
       </header>
@@ -241,9 +248,8 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
         {error&&<p role="alert" className="warning">{error}</p>}
         {s.archived&&<p role="status" className="warning">Servizio archiviato. Riaprilo per continuare la revisione.</p>}
         {s.status==='applying'&&<p role="status" className="warning">Applicazione stelle in corso. Completa o riprendi dal plugin.</p>}
-        {(s.requires_analysis||s.proposal?.stale)&&<p className="warning">Il servizio è cambiato. Riavvia la selezione per aggiornare la proposta.</p>}
-        {s.proposal?.warnings.map((w,i)=><p key={i} className="warning">{w}</p>)}
-        {selectedIds.size<s.settings.target&&<p className="warning">La revisione corrente è sotto il numero richiesto ({s.settings.target}).</p>}
+        {analysisInProgress?<p role="status" className="warning">Analisi in corso · {s.job?.completed??0} / {s.job?.total??s.photos.length}. {s.proposal?'I risultati visibili appartengono alla proposta precedente.':'La nuova proposta sarà disponibile al termine.'}</p>:outdatedProposal?<p role="status" className="warning">Impostazioni o foto aggiornate. Avvia la selezione per ottenere una nuova proposta; i risultati precedenti non descrivono i criteri attuali.</p>:s.proposal?.warnings.map((w,i)=><p key={i} className="warning">{w}</p>)}
+        {currentProposal&&selectedIds.size<s.settings.target&&<p className="warning">La revisione corrente è sotto il numero richiesto ({s.settings.target}).</p>}
         <div className="reviewhead">
           <div className="review-title"><h2>Provino</h2><span>{visible.length} foto</span></div>
           <div className="review-filters">
@@ -295,13 +301,13 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
       <aside className="inspector" aria-label="Strumenti di selezione">
         <form className="config" onSubmit={e=>{e.preventDefault();void save(true);}}>
           <div className="panel-heading"><h2>Configura la selezione</h2>{draftChanged&&<span className="unsaved" role="status">Da salvare</span>}</div>
-          {staleDraft&&<p role="alert" className="warning">I criteri salvati sono cambiati. <button type="button" onClick={()=>{setBase(s.settings);setDraft(s.settings);}}>Carica i criteri salvati</button></p>}
+          {staleDraft&&<p role="alert" className="warning">I criteri salvati sono cambiati. <button type="button" onClick={()=>{setBase(unifiedSettings(s.settings));setDraft(unifiedSettings(s.settings));}}>Carica i criteri salvati</button></p>}
           <fieldset disabled={busy||staleDraft}>
             <div className="tool-section target-section">
-              <div className="target-heading"><label htmlFor="target-count">Numero di candidate</label><input id="target-count" type="number" min={1} max={s.photos.length} value={Number.isNaN(draft.target)?'':draft.target} required onChange={e=>setDraft({...draft,target:e.target.valueAsNumber})}/></div>
+              <div className="target-heading"><label htmlFor="target-count">Candidate locali</label><input id="target-count" type="number" min={1} max={s.photos.length} value={Number.isNaN(draft.target)?'':draft.target} required onChange={e=>setDraft({...draft,target:e.target.valueAsNumber})}/></div>
               <input aria-label="Regola numero di candidate" aria-describedby="target-help" type="range" min={1} max={s.photos.length} step={1} value={Number.isFinite(draft.target)?Math.min(s.photos.length,Math.max(1,draft.target)):1} onChange={e=>setDraft({...draft,target:e.target.valueAsNumber})}/>
               <div className="range-ends"><span>1</span><span>{s.photos.length} foto</span></div>
-              <p id="target-help" className="hint">Obiettivo indicativo. La copertura può richiedere più candidate.</p>
+              <p id="target-help" className="hint">Obiettivo della selezione locale. Il numero finale OpenAI si imposta separatamente nel riepilogo di invio.</p>
             </div>
             <div className="tool-section">
               <label>Parti da un preset<select value={presetChoice} onChange={e=>{const p=presets.find(p=>p.id+':'+p.version===e.target.value);if(p)applyPreset(p);else{setPresetChoice('');setDraft({...draft,preset_id:'',preset_version:0,preset_snapshot:null,service_criteria:[],subject_query:'',instructions:''});}}}>
@@ -310,20 +316,18 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
                 {presets.map(p=><option key={p.id} value={p.id+':'+p.version}>{p.name} · v{p.version}</option>)}
               </select></label>
               <div className="preset-actions"><button className="text-button" type="button" onClick={()=>editPreset(null)}>Salva come nuovo preset</button>{offer&&<button className="text-button" type="button" onClick={()=>editPreset(offer)}>Aggiorna preset</button>}</div>
-              <p className="hint">{snapshot ? 'Base applicata: '+snapshot.name+' · v'+snapshot.version+'. I criteri qui sotto sono una copia modificabile per questo servizio.' : 'Nessun preset applicato. Puoi configurare direttamente questo servizio.'}</p>
+              <p className="hint">{snapshot ? 'Base applicata: '+snapshot.name+' · v'+snapshot.version+'. Il testo qui sotto è una copia modificabile per questo servizio.' : 'Nessun preset applicato. Puoi configurare direttamente questo servizio.'}</p>
               {snapshot&&<button className="text-button" type="button" onClick={()=>{setPresetChoice('');setDraft({...draft,preset_id:'',preset_version:0,preset_snapshot:null,service_criteria:[],subject_query:'',instructions:''});}}>Rimuovi preset e criteri</button>}
               <label>Modalità<select value={draft.mode} onChange={e=>setDraft({...draft,mode:e.target.value as Settings['mode']})}><option value="local">Solo locale</option><option value="hybrid">Ibrida: locale + OpenAI</option></select></label>
             </div>
             <section className="tool-section">
               <h2>Istruzioni e criteri del servizio</h2>
               <label>Istruzioni per la selezione<textarea rows={5} value={draft.instructions} placeholder="Descrivi cosa vuoi conservare e cosa confrontare in questo servizio" onChange={e=>setDraft({...draft,instructions:e.target.value})}/></label>
-              {!instructionsAvailable&&(draft.instructions.trim()||serviceCriteria.length>0)&&<p className="warning">Il modello locale per applicare queste istruzioni non è ancora disponibile. La selezione con istruzioni sarà disponibile dopo la configurazione.</p>}
+              {!instructionsAvailable&&(draft.instructions.trim())&&<p className="warning">Il modello locale per applicare queste istruzioni non è ancora disponibile. La selezione con istruzioni sarà disponibile dopo la configurazione.</p>}
               <p className="hint">Descrivi liberamente le priorità. Riceverai la proposta e gli eventuali avvisi su richieste ambigue o in conflitto.</p>
-              <label>Criteri del servizio, uno per riga<textarea rows={4} value={serviceCriteria.join('\n')} onChange={e=>setDraft({...draft,service_criteria:e.target.value.split('\n')})}/></label>
-              <details><summary>Ricerca per soggetto facoltativa</summary><label>Soggetto da privilegiare<input value={draft.subject_query??''} placeholder="Es. uccelli" maxLength={500} onChange={e=>setDraft({...draft,subject_query:e.target.value})}/></label><p className="hint">Aiuta il confronto visivo; i criteri complessi restano nelle istruzioni sopra.</p></details>
             </section>
             {cameras.length>0&&<details className="tool-section disclosure"><summary>Sincronizzazione fotocamere</summary><p className="hint">Offset in secondi applicati all’ordine cronologico nella web app.</p><div className="camera-fields">{cameras.map(c=><label key={c}>{c}<input type="number" step="1" value={draft.camera_offsets[c]??0} onChange={e=>setDraft({...draft,camera_offsets:{...draft.camera_offsets,[c]:Number(e.target.value)}})}/></label>)}</div></details>}
-            <div className="tool-section run-section"><div className="run-actions"><button type="button" disabled={!draftChanged||!valid} onClick={()=>void save(false)}>Salva criteri</button><button className="primary" disabled={!valid||s.status!=='ready'||(!instructionsAvailable&&Boolean(draft.instructions.trim()||serviceCriteria.length))}>{draft.mode==='hybrid'?'Avvia selezione locale':'Avvia selezione'}</button></div><p className="hint">La proposta si rivede nel provino. Le decisioni manuali e le foto conservate per copertura restano visibili.</p></div>
+            <div className="tool-section run-section"><div className="run-actions"><button type="button" disabled={!draftChanged||!valid} onClick={()=>void save(false)}>Salva criteri</button><button className="primary" disabled={!valid||s.status!=='ready'||(!instructionsAvailable&&Boolean(draft.instructions.trim()))}>{draft.mode==='hybrid'?'Avvia selezione locale':'Avvia selezione'}</button></div><p className="hint">La proposta si rivede nel provino. Le decisioni manuali e le foto conservate per copertura restano visibili.</p></div>
           </fieldset>
         </form>
         {draft.mode==='hybrid'&&<APIReview service={s} dirty={draftChanged} disabled={busy} update={update}/>}
@@ -336,7 +340,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
     {showCompare&&<Modal title="Confronta le anteprime" close={()=>setShowCompare(false)}><p className="hint">Zoom relativo alla vista. Le anteprime possono non bastare per valutare la nitidezza dell’originale.</p><label>Zoom {zoom}%<input type="range" min={100} max={300} step={10} value={zoom} onChange={e=>setZoom(e.target.valueAsNumber)}/></label><label className="check"><input type="checkbox" checked={linked} onChange={e=>{mirrored.current=null;setLinked(e.target.checked);}}/>Collega scorrimento</label><div className="comparison" ref={comparison}>{compare.map(id=>{const p=photoMap.get(id);return p&&<ComparisonPhoto key={id} service={s} photo={p} zoom={zoom} onScroll={mirrorScroll}/>;})}</div></Modal>}
     {showAccept&&<Modal title="Usa la proposta come selezione" close={()=>setShowAccept(false)}><p>Conferma {shortlist.size} foto proposte come candidate. Le altre restano accessibili tra le escluse dalla proposta; le decisioni manuali precedenti prevalgono.</p><p className="warning">Può lasciare situazioni senza candidate: verifica prima di confermare.</p><p>Nessuna stella viene applicata. La scelta può essere annullata dal provino.</p><button className="primary" disabled={busy||draftChanged||s.proposal?.stale} onClick={()=>void action(async()=>{update(await api<Service>(path+'/accept-shortlist','POST',{revision:s.revision,confirm_last:true}));setShowAccept(false);})}>Conferma candidate</button>{error&&<p role="alert" className="warning">{error}</p>}</Modal>}
     {showRating&&<Modal title="Rivedi le stelle" close={()=>setShowRating(false)}><p>{selectedIds.size} candidate su {s.photos.length} foto. {s.proposal?'La proposta include le decisioni manuali.':'Selezione manuale, nessuna analisi eseguita.'}</p><p>Il plugin può assegnare una stella alle candidate idonee con zero stelle. Prima dell’applicazione occorre verificare che la scrittura automatica dei metadati su file sia disabilitata.</p>{plan?<><p role="status"><strong>{plan.items.length} modifiche proposte</strong> · revisione {plan.revision}</p>{plan.warnings.map((w,i)=><p className="warning" key={i}>{w}</p>)}{plan.items.length>0&&<><p>Conferma questo elenco e apri “Applica stelle” nel plugin. Controlla la scrittura automatica dei metadati e conferma in Lightroom.</p><ul className="planlist">{plan.items.map(i=><li key={i.photo_id}>{i.filename??photoMap.get(i.photo_id)?.filename??i.photo_id} · ID {i.local_id} · {i.expected_rating} → 1 ★</li>)}</ul>{planReceived?<p role="status">Operazione registrata. Consulta Esiti Lightroom.</p>:plan.revision!==s.revision?<p role="alert">Piano superato. Chiudi e prepara una nuova anteprima.</p>:confirmed?<p role="status">Piano confermato · {plan.batch_id}</p>:<button className="primary" disabled={busy||draftChanged} onClick={()=>void action(async()=>{await api(path+'/rating-plan/confirm','POST',{batch_id:plan.batch_id});update(await api<Service>(path));})}>Conferma elenco per Lightroom</button>}</>}</>:<button className="primary" disabled={busy} onClick={()=>void action(async()=>setPlan(await api<Plan>(path+'/rating-plan','POST',{revision:s.revision})))}>Prepara anteprima delle modifiche</button>}{error&&<p role="alert" className="warning">{error}</p>}</Modal>}
-    {presetEdit&&<Modal title={presetBase?'Modifica preset':'Nuovo preset'} close={()=>setPresetEdit(false)}><form onSubmit={e=>{e.preventDefault();void savePreset();}}><label>Nome<input value={presetName} onChange={e=>setPresetName(e.target.value)} required/></label><label>Istruzioni del preset<textarea rows={4} value={presetInstructions} onChange={e=>setPresetInstructions(e.target.value)}/></label><label>Soggetto del preset<input value={presetQuery} maxLength={500} onChange={e=>setPresetQuery(e.target.value)}/></label><label>Criteri, uno per riga<textarea rows={5} value={presetCriteria} onChange={e=>setPresetCriteria(e.target.value)}/></label><p>I servizi esistenti mantengono la revisione salvata.</p><button className="primary" disabled={busy||!presetName.trim()}>Salva preset</button>{error&&<p role="alert" className="warning">{error}</p>}</form></Modal>}
+    {presetEdit&&<Modal title={presetBase?'Modifica preset':'Nuovo preset'} close={()=>setPresetEdit(false)}><form onSubmit={e=>{e.preventDefault();void savePreset();}}><label>Nome<input value={presetName} onChange={e=>setPresetName(e.target.value)} required/></label><label>Istruzioni del preset<textarea rows={4} value={presetInstructions} onChange={e=>setPresetInstructions(e.target.value)}/></label><p>I servizi esistenti mantengono la revisione salvata.</p><button className="primary" disabled={busy||!presetName.trim()}>Salva preset</button>{error&&<p role="alert" className="warning">{error}</p>}</form></Modal>}
     {coverage&&<Modal title="Ultima candidata del gruppo" close={()=>setCoverage(null)}><p>Questo gruppo rimarrà senza candidate dopo la modifica di {coverage.photo.filename}.</p><button className="primary" disabled={busy} onClick={()=>void decide(coverage.photo,coverage.state,coverage.locked,true)}>Conferma modifica</button>{error&&<p role="alert" className="warning">{error}</p>}</Modal>}
   </>;
 }

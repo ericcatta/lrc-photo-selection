@@ -88,7 +88,7 @@ try {
   await waitFor("[...document.querySelectorAll('label')].some(x=>x.textContent==='Chiave API')");
   if(await evaluate("document.querySelector('input[type=password]')?.value!==''"))throw new Error('Screenshot must not contain API key');
   const presetDraft=await evaluate("({instructions:[...document.querySelectorAll('.config label')].find(x=>x.textContent.startsWith('Istruzioni per la selezione'))?.querySelector('textarea')?.value,criteria:[...document.querySelectorAll('.config label')].find(x=>x.textContent.startsWith('Criteri del servizio'))?.querySelector('textarea')?.value})");
-  if(!presetDraft.criteria?.includes('Conservare specie'))throw new Error('Preset did not populate editable criteria');
+  if(!presetDraft.instructions?.includes('Conservare specie')||presetDraft.criteria!==undefined)throw new Error('Preset did not populate unified instructions');
   const metrics=await call('Page.getLayoutMetrics');
   const height=Math.ceil(metrics.cssContentSize.height);
   const image=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true,clip:{x:0,y:0,width:1500,height,scale:1}});

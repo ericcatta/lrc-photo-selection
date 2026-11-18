@@ -151,3 +151,56 @@ def test_instruction_preference_can_outweigh_small_diversity_difference(tmp_path
     result['blocked']=True
     encoder.encode=lambda path: pytest.fail('blocked instruction must not encode')
     assert rerank_instruction_shortlist(result,snapshot,store,encoder)==result
+
+
+def test_category_coverage_survives_embedding_rerank_and_prefers_requested_people(tmp_path):
+    from lrc_selection.semantic import rerank_instruction_shortlist
+    store,snapshot,encoder=fixture(tmp_path)
+    categories=[{'id':'birds','description':'Uccelli'},{'id':'portraits','description':'Ritratti di persone'}]
+    result=instruction_result()
+    result['instruction_interpretation']={'requested_categories':categories}
+    for pid,assessment in result['assessments'].items():
+        assessment['category_matches']={'birds':'yes' if pid in ('0','1') else 'no',
+                                        'portraits':'yes' if pid=='2' else 'no'}
+        assessment['preference_score']=1. if pid in ('0','1') else .1
+    reranked=rerank_instruction_shortlist(result,snapshot,store,encoder)
+    assert reranked['shortlist']==['0','2']
+    assert all(category['status']=='represented' for category in reranked['coverage'])
+    snapshot['decisions']={'2':{'state':'excluded','locked':True}}
+    reranked=rerank_instruction_shortlist(result,snapshot,store,encoder)
+    assert '2' not in reranked['shortlist']
+    assert reranked['coverage'][1]['status']=='manual-excluded'
+    assert any('decisioni manuali' in w for w in reranked['warnings'])
+
+
+def test_category_uncertainty_not_absence_or_filler_and_multicategory_image():
+    from lrc_selection.semantic import select_with_category_coverage
+    categories=[{'id':'birds','description':'Uccelli'},{'id':'portraits','description':'Ritratti'}]
+    assessments={'a':{'match':'yes','category_matches':{'birds':'yes','portraits':'yes'}},
+                 'b':{'match':'uncertain','category_matches':{'birds':'no','portraits':'uncertain'}}}
+    result=select_with_category_coverage(['a'],[],assessments,categories,1)
+    assert result['shortlist']==['a']
+    assert all(c['status']=='represented' for c in result['coverage'])
+    assessments['a']['category_matches']['portraits']='no'
+    result=select_with_category_coverage(['a'],[],assessments,categories,2)
+    assert result['shortlist']==['a']
+    assert result['coverage'][1]['status']=='uncertain'
+    assert any('valutazioni incerte' in w for w in result['warnings'])
+
+
+def test_technical_annotations_cannot_replace_last_requested_portrait(tmp_path):
+    from lrc_selection.semantic import rerank_instruction_shortlist
+    store,snapshot,encoder=fixture(tmp_path)
+    result=instruction_result(matches=('0','1','2'))
+    result['instruction_interpretation']={'requested_categories':[
+        {'id':'birds','description':'Uccelli'},{'id':'portraits','description':'Ritratti di persone'}]}
+    for pid,assessment in result['assessments'].items():
+        assessment['category_matches']={'birds':'yes' if pid in ('0','1') else 'no',
+                                        'portraits':'yes' if pid=='2' else 'no'}
+        assessment['quality_issues']=['Leggero mosso'] if pid=='2' else []
+    first=rerank_instruction_shortlist(result,snapshot,store,encoder)
+    assert first['shortlist']==['0','2']
+    result['assessments']['2']['quality_issues']=['Forte mosso', 'Rumore', 'Messa a fuoco incerta']
+    second=rerank_instruction_shortlist(result,snapshot,store,encoder)
+    assert second['shortlist']==first['shortlist']
+    assert all(category['status']=='represented' for category in second['coverage'])

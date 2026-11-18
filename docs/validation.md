@@ -74,3 +74,11 @@ Trasporto Responses, stima, budget persistente per servizio, conferma del campio
 Frontend: 26 test passati e build produzione riuscita. Verifica sul backend riavviato: catalogo locale modelli disponibile, servizio reale senza job API, consumi e riserve a zero. Nessuna richiesta di aggiornamento modelli eseguita sull’account reale.
 
 Smoke browser API completo (`scripts/api_browser_smoke.mjs`): stima senza chiamate, conferma obbligatoria, testo Unicode/spazi identico, una chiamata simulata per due anteprime identiche tramite cache, consumo registrato e riserva rilasciata. Screenshot desktop prima/dopo e mobile verificati, nessun overflow a 390 px. Fixture separata, chiave falsa e trasporto sostituito prima dell’avvio del server; nessuna rete OpenAI.
+
+## Revisione della selezione complessiva e del flusso — 18 novembre 2026
+
+134 test backend passati (Apple Vision invariato escluso), 32 test frontend passati, build produzione e diff check riusciti. Verificati copertura uccelli/ritratti con risposte sintetiche, prevalenza delle decisioni manuali, invalidazione delle vecchie cache, testo unico/preset, avvisi obsoleti, API diretta, stima senza budget obbligatorio, confronto globale, ranking invalido, riserve/costi, ripresa, vecchi piani rifiutati e numero finale modificabile senza chiamate.
+
+Entrambi gli smoke browser sono passati con sole fixture sintetiche. Il flusso API ha eseguito tre richieste simulate: interpretazione, una valutazione riutilizzata per due anteprime identiche, confronto globale. Stima senza trasporto, consenso esplicito, testo originale intatto e ricomposizione 1→2 senza nuove richieste. Screenshot desktop/mobile ispezionati.
+
+Backend riavviato senza analisi attive; verifica in sola lettura del servizio reale: nessun invio, consumo o riserva API. La precisione del nuovo riconoscimento di categorie e del confronto globale su Campione di prova resta da verificare con la prova manuale dell’utente. I risultati precedenti non sono stati ricalcolati automaticamente. Per usare la nuova logica locale avviare una nuova analisi; per OpenAI ricalcolare la stima, poiché i piani precedenti non comprendono il confronto globale.

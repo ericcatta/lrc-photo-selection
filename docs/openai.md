@@ -5,12 +5,12 @@ Il backend locale usa Responses API. Codex resta lo strumento di sviluppo: non v
 ## Flusso
 
 1. Salvare la chiave nella configurazione OpenAI della web app. Il backend la conserva nel portachiavi macOS; non viene restituita al frontend, inserita nei log o scritta nel repository.
-2. Eseguire il primo passaggio locale. Passare alla modalità ibrida e scegliere esplicitamente le anteprime del campione da valutare. È possibile includere alternative per rivalutarle.
-3. Impostare il budget totale in USD per questo servizio. Richiedere la stima: questa operazione non chiama OpenAI e non invia immagini.
-4. Rivedere elenco e anteprime, modello, testo originale, criteri aggiuntivi, costo prudenziale, consumo precedente e budget disponibile.
+2. Scegliere la modalità ibrida: il passaggio locale è facoltativo. Selezionare le anteprime da valutare, partendo dalla proposta locale oppure da tutte le anteprime importate. Il confronto riguarda soltanto il campione confermato, non le foto escluse dall’invio.
+3. Impostare il numero finale OpenAI, indipendente dalla quantità locale. Richiedere la stima senza dover impostare un budget: questa operazione non chiama OpenAI e non invia immagini. Un budget complessivo rimane facoltativo. La conferma autorizza il limite prudenziale del singolo piano mostrato.
+4. Rivedere elenco e anteprime, modello, testo originale, numero finale, stima, limite prudenziale e consumo precedente.
 5. Confermare esplicitamente l'invio. Soltanto questa azione abilita le richieste del piano mostrato. Una modifica a dati, criteri, modello o revisione richiede una nuova stima e una nuova conferma.
 
-Il testo delle istruzioni è un elemento `input_text` utente separato, identico al testo salvato (Unicode, righe e spazi inclusi). I criteri aggiuntivi e lo schema tecnico non lo sostituiscono. Si inviano soltanto le anteprime selezionate: mai RAW, catalogo, percorsi degli originali o credenziali nel prompt. Le anteprime possono comunque contenere dati personali visibili, per questo l'elenco richiede conferma. `store:false` disabilita la conservazione della risposta per il successivo recupero tramite API; non è una promessa di assenza di tutti i log di servizio OpenAI.
+Il testo delle istruzioni è un elemento `input_text` utente separato, identico al testo salvato (Unicode, righe e spazi inclusi). L’interfaccia offre un unico testo modificabile. I criteri dei vecchi servizi/preset sono riportati visibilmente in questo campo, mantenendo il testo originale come prefisso; soltanto un salvataggio esplicito consolida i campi. Gli schemi tecnici e le categorie derivate non sostituiscono il testo salvato. Si inviano soltanto le anteprime selezionate: mai RAW, catalogo, percorsi degli originali o credenziali nel prompt. Le anteprime possono comunque contenere dati personali visibili, per questo l'elenco richiede conferma. `store:false` disabilita la conservazione della risposta per il successivo recupero tramite API; non è una promessa di assenza di tutti i log di servizio OpenAI.
 
 ## Stima
 
@@ -44,3 +44,19 @@ Non viene presunto un saldo o un accredito nominale. Il budget locale è distint
 La disponibilità dell’account non certifica il supporto immagini o il prezzo: il registro verificato è distinto dall’elenco dinamico. Tariffe e capacità non vengono inventate dal nome del modello.
 
 Ulteriore fonte: https://developers.openai.com/api/docs/models/gpt-5.4
+
+## Quantità finale e selezione complessiva
+
+Il numero finale API è separato dall’obiettivo locale. Dopo un’analisi completata si può ricomporre la proposta con un altro numero riutilizzando le valutazioni conservate, senza inviare nuove richieste. Non può recuperare informazioni sulle immagini mai incluse nel campione confermato.
+
+Priorità: istruzioni dell’utente, copertura delle categorie richieste e varietà della serie, poi qualità tra alternative pertinenti. La qualità non può sostituire una categoria richiesta con un’altra. Le categorie sono interpretazioni del modello, non fatti certificati: mancanze o incertezze vengono segnalate e non riempite con immagini non pertinenti.
+
+Tra alternative pertinenti contano espressione, gesto, composizione e significato nella serie: nitidezza e perfezione tecnica non sono il criterio dominante. Il merito visivo stimato dal modello resta un giudizio ordinale soggettivo, non una misura calibrata della bellezza. Le preferenze esplicite dell’utente hanno precedenza.
+
+## Confronto dell’insieme
+
+Il piano API comprende: interpretazione testuale delle categorie, valutazione delle singole anteprime, confronto globale tramite provini JPEG indicizzati (16 immagini per foglio) e tutte le valutazioni del campione. Ogni richiesta mantiene il testo originale utente come elemento separato identico. Il riepilogo include anche le richieste di interpretazione e confronto globale nel costo. Non vengono aggiunte fotografie fuori dall’elenco confermato.
+
+Il confronto globale restituisce un ordinamento completo delle corrispondenze confermate. La ricomposizione locale conserva decisioni manuali e almeno una rappresentante per ogni categoria riconosciuta e idonea. I dettagli piccoli nei provini restano incerti e il riconoscimento non equivale a una garanzia di copertura. Un confronto mancante/invalido non viene spacciato per completato.
+
+Il motore locale valuta tutte le anteprime e combina le evidenze dell’intero servizio con categorie, scene indicative e diversità degli embedding. Non mostra contemporaneamente tutte le fotografie al VLM locale: il confronto globale locale è basato sulle evidenze aggregate e sui vettori visivi. Le vecchie cache senza categorie vengono invalidate dalla versione del motore.

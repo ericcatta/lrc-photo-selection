@@ -27,7 +27,7 @@ try {
   function call(method,params={}){return new Promise((resolve,reject)=>{const id=++next;const timer=setTimeout(()=>{pending.delete(id);reject(new Error('Timeout '+method));},15000);pending.set(id,{resolve,reject,timer});ws.send(JSON.stringify({id,method,params}));});}
   const evaluate=async expression=>(await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true})).result?.value;
   await call('Page.enable');
-  await call('Emulation.setDeviceMetricsOverride',{width:1500,height:1100,deviceScaleFactor:1,mobile:false});
+  await call('Emulation.setDeviceMetricsOverride',{width:1500,height:1400,deviceScaleFactor:1,mobile:false});
   await call('Page.navigate',{url:'http://127.0.0.1:18766/#token=synthetic-ui-test-only'});
   const waitFor=async(expression)=>{for(let i=0;i<100;i++){if(await evaluate('Boolean('+expression+')'))return;await pause(100);}throw new Error('UI condition not reached: '+expression);};
   const click=async text=>{const found=await evaluate(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b||b.disabled)return false;b.click();return true;})()`);if(!found)throw new Error('Button unavailable: '+text);};
@@ -37,7 +37,7 @@ try {
   await waitFor("[...document.querySelectorAll('button')].some(b=>b.textContent==='Stima e rivedi invio a OpenAI'&&!b.disabled)");
   await click('Stima e rivedi invio a OpenAI');
   await waitFor("document.querySelector('dialog[open] input[type=number]')&&!document.querySelector('dialog[open] fieldset').disabled");
-  await evaluate("(()=>{const e=document.querySelector('dialog[open] input[type=number]');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(e,'0.10');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  if(await evaluate("[...document.querySelectorAll('dialog label')].find(l=>l.textContent.startsWith('Budget complessivo del servizio'))?.querySelector('input').value!==''"))throw new Error('Budget should remain optional and blank');
   await click('Calcola stima senza inviare foto');
   await waitFor("document.querySelector('.api-estimate')");
   const before=await request('/synthetic-transport-status');
@@ -52,17 +52,22 @@ try {
   await click('Conferma e invia a OpenAI');
   await waitFor("document.querySelector('dialog[open]')?.textContent.includes('Completata')");
   const after=await request('/synthetic-transport-status');
-  if(after.mock_calls!==1||!after.original_text_preserved||after.real_network_calls!==0)throw new Error('Unexpected simulated transport: '+JSON.stringify(after));
+  if(after.mock_calls!==3||!after.original_text_preserved||after.real_network_calls!==0)throw new Error('Unexpected simulated transport: '+JSON.stringify({after,status:await request('/services/synthetic-ui/api-status')}));
   const status=await request('/services/synthetic-ui/api-status');
   if(status.job.status!=='completed'||status.spent_usd<=0||status.reserved_usd!==0)throw new Error('Usage ledger incorrect');
-  const final=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
+  await evaluate("(()=>{const e=[...document.querySelectorAll('dialog label')].find(l=>l.textContent.startsWith('Numero finale OpenAI')).querySelector('input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'2');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await click('Aggiorna numero finale senza nuove chiamate');
+  await waitFor("document.querySelector('.selection-count')?.textContent.includes('2 proposte')");
+  const reselection=await request('/synthetic-transport-status');
+  if(reselection.mock_calls!==3)throw new Error('Reselect triggered another API call');
+  const final=await call('Page.captureScreenshot' ,{format:'png',captureBeyondViewport:false});
   await writeFile('.build/api-review-completed.png',Buffer.from(final.data,'base64'));
   await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   const mobile=await evaluate('({width:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth,dialog:document.querySelector("dialog").scrollWidth,dialogWidth:document.querySelector("dialog").clientWidth})');
   if(mobile.scroll>mobile.width||mobile.dialog>mobile.dialogWidth)throw new Error('API dialog overflows: '+JSON.stringify(mobile));
   const mobileImage=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
   await writeFile('.build/api-review-mobile.png',Buffer.from(mobileImage.data,'base64'));
-  console.log(JSON.stringify({estimateNoTransmission:true,explicitConfirmation:true,originalTextPreserved:true,mockCalls:after.mock_calls,usageRecorded:true,realNetworkCalls:0,mobile,screenshots:['.build/api-review-before-confirm.png','.build/api-review-completed.png','.build/api-review-mobile.png']}));
+  console.log(JSON.stringify({estimateNoTransmission:true,explicitConfirmation:true,originalTextPreserved:true,mockCalls:after.mock_calls,usageRecorded:true,optionalBudget:true,reselectionWithoutNetwork:true,realNetworkCalls:0,mobile,screenshots:['.build/api-review-before-confirm.png','.build/api-review-completed.png','.build/api-review-mobile.png']}));
   await call('Browser.close').catch(()=>{});
 } finally {
   if(ws)ws.close();

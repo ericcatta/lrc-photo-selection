@@ -33,14 +33,14 @@ def instruction_model(client, monkeypatch):
             self.entered.set()
             assert self.release.wait(3), 'Synthetic test did not release analysis'
             return {'summary': 'Solo forme rosse sintetiche', 'criteria': ['Forma rossa'],
-                    'ambiguities': [], 'unsupported': []}
+                    'ambiguities': [], 'unsupported': [], 'requested_categories': []}
 
         def assess(self, path, interpretation):
             with Image.open(path) as image:
                 red, green, blue = image.getpixel((0, 0))
             self.calls.append(('assess', path))
             return {'match': 'yes' if self.matches and red > green and red > blue else 'no',
-                    'reason': 'Colore sintetico verificato', 'scene': 'Forma sintetica', 'quality_issues': [], 'preference_score': .5}
+                    'reason': 'Colore sintetico verificato', 'scene': 'Forma sintetica', 'quality_issues': [], 'preference_score': .5, 'category_matches': {}}
 
     monkeypatch.setattr(vlm, 'LocalVLM', FakeVLM)
     yield FakeVLM

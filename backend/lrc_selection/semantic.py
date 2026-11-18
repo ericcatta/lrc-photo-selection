@@ -102,7 +102,8 @@ def build_semantic_proposal(store, snapshot, encoder, progress=None):
 def rerank_instruction_shortlist(result, snapshot, store, encoder):
     """Add visual diversity among confirmed matches without changing assessments.
 
-    Experimental MMR: 0.7 * model ordinal preference + 0.3 * embedding novelty.
+    Experimental MMR: 0.7 * ordinal user preference/photographic merit +
+    0.3 * embedding novelty.
     Novelty is (1 - highest cosine similarity to an already selected image) / 2.
     The constants are exposed, not calibrated. This list does not establish
     equivalence, person identities or scene coverage. No missing/uncertain/no
@@ -140,7 +141,8 @@ def rerank_instruction_shortlist(result, snapshot, store, encoder):
     selected = list(forced)
     remaining = [pid for pid in matches if pid in vectors]
     ranking_evidence = {}
-    while remaining and len(selected) < snapshot['settings']['target']:
+    categories = result.get('instruction_interpretation', {}).get('requested_categories', [])
+    while remaining and (categories or len(selected) < snapshot['settings']['target']):
         selected_vectors = [vectors[pid] for pid in selected if pid in vectors]
         evaluated = {}
         for pid in remaining:
@@ -156,7 +158,12 @@ def rerank_instruction_shortlist(result, snapshot, store, encoder):
         selected.append(chosen)
         remaining.remove(chosen)
         ranking_evidence[chosen] = evaluated[chosen]
+    covered = select_with_category_coverage([pid for pid in selected if pid not in forced], forced,
+                                             assessments, categories, snapshot['settings']['target'])
+    selected = covered['shortlist']
     updated['shortlist'] = selected
+    updated['coverage'] = covered['coverage']
+    updated.setdefault('warnings', []).extend(w for w in covered['warnings'] if w not in updated.get('warnings', []))
     reasons = {}
     for pid in selected:
         if pid in forced:
@@ -169,9 +176,67 @@ def rerank_instruction_shortlist(result, snapshot, store, encoder):
     updated.setdefault('method', {}).update(
         ranking='instruction-preference-and-visual-diversity-v1',
         preference_weight=.7, novelty_weight=.3, calibrated=False)
-    warning = 'Diversità visiva stimata dagli embedding con pesi sperimentali 70% preferenze e 30% novità; non certifica scene, persone o copertura.'
+    warning = 'Diversità visiva stimata dagli embedding con pesi sperimentali 70% preferenze e merito fotografico e 30% novità; non certifica scene, persone o copertura.'
     if warning not in updated.setdefault('warnings', []):
         updated['warnings'].append(warning)
     if any(pid not in vectors for pid in matches):
         updated['warnings'].append('Corrispondenze senza anteprima disponibili: da rivedere, non aggiunte automaticamente alla proposta.')
     return updated
+
+
+def select_with_category_coverage(ordered_ids, forced_ids, assessments, categories, target):
+    """Represent every requested category with eligible positive model evidence.
+
+    Input order is the caller's preference/diversity ranking. Never use uncertain
+    or negative evidence as a substitute. The requested quantity is a target:
+    category coverage and manual positives may exceed it, with an explicit warning.
+    This preserves only categories the model reported, not all real situations.
+    """
+    selected = list(dict.fromkeys(forced_ids))
+    ordered = list(dict.fromkeys(pid for pid in ordered_ids if pid not in selected))
+    category_ids = [category['id'] for category in categories]
+    def covers(pid, category_id):
+        return assessments.get(pid, {}).get('category_matches', {}).get(category_id) == 'yes'
+    uncovered = {cid for cid in category_ids if not any(covers(pid, cid) for pid in selected)}
+    while uncovered:
+        candidates = [pid for pid in ordered if assessments.get(pid, {}).get('match') == 'yes'
+                      and any(covers(pid, cid) for cid in uncovered)]
+        if not candidates:
+            break
+        chosen = max(candidates, key=lambda pid: sum(covers(pid, cid) for cid in uncovered))
+        selected.append(chosen)
+        ordered.remove(chosen)
+        uncovered = {cid for cid in uncovered if not covers(chosen, cid)}
+    for pid in ordered:
+        if len(selected) >= target:
+            break
+        if assessments.get(pid, {}).get('match') == 'yes':
+            selected.append(pid)
+    coverage, warnings = [], []
+    eligible = set(ordered_ids) | set(forced_ids)
+    for category in categories:
+        cid, description = category['id'], category['description']
+        representatives = [pid for pid in selected if covers(pid, cid)]
+        recognized = [pid for pid, a in assessments.items() if a.get('match') == 'yes' and covers(pid, cid)]
+        available = [pid for pid in recognized if pid in eligible]
+        uncertain = [pid for pid, a in assessments.items()
+                     if a.get('category_matches', {}).get(cid, 'uncertain') == 'uncertain']
+        if representatives:
+            status = 'represented'
+        elif recognized and not available:
+            status = 'manual-excluded'
+            warnings.append(f'Categoria richiesta «{description}» non rappresentata: le corrispondenze sono escluse dalle decisioni manuali.')
+        elif not assessments:
+            status = 'not-assessed'
+            warnings.append(f'Categoria richiesta «{description}» non valutata: analisi non eseguita.')
+        elif uncertain:
+            status = 'uncertain'
+            warnings.append(f'Categoria richiesta «{description}» non confermata: presenti valutazioni incerte da rivedere, nessuna sostituzione automatica.')
+        else:
+            status = 'not-detected'
+            warnings.append(f'Categoria richiesta «{description}»: nessuna corrispondenza idonea rilevata; non è prova di assenza nel servizio.')
+        coverage.append({'id': cid, 'description': description, 'selected_ids': representatives,
+                         'eligible_count': len(available), 'uncertain_count': len(uncertain), 'status': status})
+    if len(selected) > target:
+        warnings.append('Quantità indicativa superata per preservare categorie richieste e decisioni manuali: rivedere il compromesso prima di confermare.')
+    return {'shortlist': selected, 'coverage': coverage, 'warnings': warnings}

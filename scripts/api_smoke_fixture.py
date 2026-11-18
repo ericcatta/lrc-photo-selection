@@ -25,7 +25,7 @@ def build_fixture(root):
     with store.transaction() as db:
         service = store.get('synthetic-ui', db)
         service['title'] = 'TEST API SINTETICO — nessuna foto reale'
-        service['settings'].update(mode='hybrid', instructions=ORIGINAL, service_criteria=['Conservare varianti'], target=1)
+        service['settings'].update(mode='hybrid', instructions=ORIGINAL, service_criteria=[], target=1)
         service['proposal'] = analyze(service)
         service['proposal']['shortlist'] = ['synthetic-0', 'synthetic-1']
         service['proposal']['shortlist_reasons'] = {pid: 'Proposta simulata per test' for pid in service['proposal']['shortlist']}
@@ -36,14 +36,23 @@ def build_fixture(root):
         assert key == 'synthetic-only-key-no-external-access'
         assert payload['input'][1]['content'][0]['text'] == ORIGINAL
         assert payload['store'] is False
-        assert payload['input'][1]['content'][1]['image_url'].startswith('data:image/jpeg;base64,')
+        kind=payload['text']['format']['name']
+        if kind!='requested_categories':
+            assert payload['input'][1]['content'][1]['image_url'].startswith('data:image/jpeg;base64,')
         calls.append({'original_text_preserved': True})
         time.sleep(.15)
+        if kind=='requested_categories':
+            assessment={'requested_categories':[{'id':'forms','description':'Forme sintetiche blu'}],'ambiguities':[],'unsupported':[]}
+        elif kind=='collection_ranking':
+            marker='\nValutazioni di TUTTE le anteprime, indici dei provini: '
+            records=json.loads(payload['input'][0]['content'][0]['text'].split(marker,1)[1])
+            assessment={'ranking':[record['index'] for record in records if record['assessment']['match']=='yes'],'warnings':[]}
+        else:
+            assert kind=='photo_assessment'
+            assessment={'match':'yes','reason':'Forma blu sintetica verificata dalla simulazione.','scene':'Scena sintetica','quality_issues':[],'preference_score':.8,'category_matches':{'forms':'yes'}}
         return {'id': 'resp_synthetic_' + str(len(calls)), 'model': MODEL, 'status': 'completed',
                 'usage': {'input_tokens': 220, 'output_tokens': 65},
-                'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': json.dumps({
-                    'match': 'yes', 'reason': 'Forma blu sintetica verificata dalla simulazione.',
-                    'scene': 'Scena sintetica', 'quality_issues': [], 'preference_score': .8})}]}]}
+                'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': json.dumps(assessment)}]}]}
 
     app.state.openai_analysis.transport = synthetic_transport
 

@@ -38,3 +38,10 @@ Use Astra Medium as orchestrator when available. Personal agents: planner gpt-6.
 - Selezionare un preset compila automaticamente criteri e istruzioni, sempre modificabili nel servizio; aggiornamento e salvataggio come nuovo preset espliciti, snapshot precedenti immutabili. Nessun preset obbligatorio.
 - Testo originale conservato integralmente, anche per le API; contesto tecnico separato, mai sostituzione con una riscrittura. Nessuna conferma obbligatoria dell’interpretazione: segnalare solo ambiguità, conflitti, assenza di corrispondenze o limiti effettivi.
 - Qwen3-VL locale valutato sul campione autorizzato; shortlist rivedibile distinta dalla copertura conservativa. Accettazione locale annullabile e piano stelle separato. Non presentare i risultati dei modelli come fatti o correttezza universale.
+
+## Revisione del flusso del 18 novembre 2026
+- L’utente esegue manualmente le prove reali: non avviare analisi o invii al suo posto.
+- Un solo campo istruzioni modificabile, compilato dai preset; migrazione dei vecchi criteri visibile e salvata esplicitamente.
+- Primo passaggio locale facoltativo per OpenAI. Stima senza budget obbligatorio, conferma del limite prudenziale per il singolo invio; budget cumulativo facoltativo.
+- Quantità finale API distinta da quella locale e ricalcolabile dai risultati conservati senza nuovi invii.
+- Priorità alle istruzioni originali e alla serie nel suo complesso: categorie richieste e varietà prima della qualità tecnica delle alternative. Nessuna categoria con evidenze positive deve sparire per un semplice ordinamento di punteggi.

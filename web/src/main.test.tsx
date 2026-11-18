@@ -13,7 +13,7 @@ beforeEach(()=>{
   history.replaceState(null,'','/');
   Object.defineProperty(HTMLDialogElement.prototype,'showModal',{configurable:true,value:function(){this.setAttribute('open','');}});
   service={id:'synthetic',title:'TEST SINTETICO',catalog_id:'fake',revision:1,status:'ready',
-    settings:{target:2,preset_id:'wedding',preset_version:1,preset_snapshot:preset,mode:'local',instructions:'',camera_offsets:{}},
+    settings:{target:2,preset_id:'wedding',preset_version:1,preset_snapshot:preset,mode:'local',instructions:'',service_criteria:[],subject_query:'',camera_offsets:{}},
     photos:[0,1].map(i=>({id:'p'+i,uuid:'u'+i,local_id:i,filename:'sintetica-'+i+'.jpg',camera:'Simulata',captured_at:0,baseline_rating:i?3:0,baseline_edit_time:1,preview_ready:false})),
     decisions:{},proposal:null,job:null,receipts:[],criteria:[]};
   calls=[];
@@ -58,16 +58,15 @@ describe('Revisione senza dati reali',()=>{
     service={...service,settings:{...service.settings,preset_id:'',preset_version:0,preset_snapshot:null,service_criteria:[],subject_query:''}};
     await workspace();
     fireEvent.change(screen.getByLabelText('Parti da un preset'),{target:{value:'wedding:1'}});
-    expect((screen.getByLabelText('Criteri del servizio, uno per riga') as HTMLTextAreaElement).value).toBe('Preservare varianti');
-    expect((screen.getByLabelText('Soggetto da privilegiare') as HTMLInputElement).value).toBe('uccelli');
-    expect((screen.getByLabelText('Istruzioni per la selezione') as HTMLTextAreaElement).value).toBe('Conserva varianti del volo');
-    fireEvent.change(screen.getByLabelText('Criteri del servizio, uno per riga'),{target:{value:'Conservare il volo'}});
+    expect((screen.getByLabelText('Istruzioni per la selezione') as HTMLTextAreaElement).value).toBe('Conserva varianti del volo\n\nPreservare varianti\nSoggetto da privilegiare: uccelli');
+    expect(screen.queryByLabelText('Criteri del servizio, uno per riga')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Istruzioni per la selezione'),{target:{value:'Conservare il volo'}});
     fireEvent.click(screen.getByRole('button',{name:'Salva criteri'}));
     await waitFor(()=>expect(calls.some(c=>c.path.endsWith('/settings'))).toBe(true));
-    expect(calls.find(c=>c.path.endsWith('/settings'))?.body?.settings).toMatchObject({service_criteria:['Conservare il volo'],subject_query:'uccelli'});
+    expect(calls.find(c=>c.path.endsWith('/settings'))?.body?.settings).toMatchObject({instructions:'Conservare il volo',service_criteria:[],subject_query:''});
     expect(calls.some(c=>c.path.startsWith('/presets')&&c.method!=='GET')).toBe(false);
     fireEvent.click(screen.getByRole('button',{name:'Rimuovi preset e criteri'}));
-    expect((screen.getByLabelText('Criteri del servizio, uno per riga') as HTMLTextAreaElement).value).toBe('');
+    expect((screen.getByLabelText('Istruzioni per la selezione') as HTMLTextAreaElement).value).toBe('');
   });
   it('filtra la proposta senza cambiare decisioni o stelle',async()=>{
     service={...service,proposal:{selected:['p0','p1'],shortlist:['p1'],groups:[],reasons:{},warnings:[],engine:'synthetic'}};
@@ -80,14 +79,13 @@ describe('Revisione senza dati reali',()=>{
   it('salva un nuovo preset dalle istruzioni e dai criteri del servizio',async()=>{
     await workspace();
     fireEvent.change(screen.getByLabelText('Istruzioni per la selezione'),{target:{value:'Conserva una foto per azione'}});
-    fireEvent.change(screen.getByLabelText('Criteri del servizio, uno per riga'),{target:{value:'Azioni differenti'}});
     fireEvent.click(screen.getByRole('button',{name:'Salva come nuovo preset'}));
     const dialog=await screen.findByRole('dialog',{name:'Nuovo preset'});
     expect((within(dialog).getByLabelText('Istruzioni del preset') as HTMLTextAreaElement).value).toBe('Conserva una foto per azione');
     fireEvent.change(within(dialog).getByLabelText('Nome'),{target:{value:'Azioni'}});
     fireEvent.click(within(dialog).getByRole('button',{name:'Salva preset'}));
     await waitFor(()=>expect(calls.some(c=>c.path==='/presets'&&c.method==='POST')).toBe(true));
-    expect(calls.find(c=>c.path==='/presets'&&c.method==='POST')?.body).toMatchObject({name:'Azioni',instructions:'Conserva una foto per azione',criteria:['Azioni differenti']});
+    expect(calls.find(c=>c.path==='/presets'&&c.method==='POST')?.body).toMatchObject({name:'Azioni',instructions:'Conserva una foto per azione',criteria:[]});
   });
   it('richiede conferma prima di adottare la proposta senza applicare stelle',async()=>{
     service={...service,proposal:{selected:['p0','p1'],shortlist:['p1'],groups:[],reasons:{},warnings:[],engine:'synthetic'}};
@@ -101,7 +99,7 @@ describe('Revisione senza dati reali',()=>{
   });
   it('salva criteri senza avviare implicitamente l’analisi',async()=>{
     await workspace();
-    fireEvent.change(screen.getByLabelText('Numero di candidate'),{target:{value:'1'}});
+    fireEvent.change(screen.getByLabelText('Candidate locali'),{target:{value:'1'}});
     fireEvent.click(screen.getByRole('button',{name:'Salva criteri'}));
     await waitFor(()=>expect(calls.some(c=>c.path.endsWith('/settings'))).toBe(true));
     expect(calls.some(c=>c.path.endsWith('/analyze'))).toBe(false);
@@ -112,7 +110,7 @@ describe('Revisione senza dati reali',()=>{
   it('sincronizza slider e numero preciso senza avviare la selezione',async()=>{
     await workspace();
     const slider=screen.getByRole('slider',{name:'Regola numero di candidate'}) as HTMLInputElement;
-    const number=screen.getByLabelText('Numero di candidate') as HTMLInputElement;
+    const number=screen.getByLabelText('Candidate locali') as HTMLInputElement;
     expect(slider.min).toBe('1');expect(slider.max).toBe('2');
     fireEvent.change(slider,{target:{value:'1'}});
     expect(number.value).toBe('1');
@@ -164,16 +162,16 @@ describe('Revisione senza dati reali',()=>{
     await workspace();
     const confirm=vi.spyOn(window,'confirm').mockReturnValue(false);
     try {
-      fireEvent.change(screen.getByLabelText('Numero di candidate'),{target:{value:'1'}});
+      fireEvent.change(screen.getByLabelText('Candidate locali'),{target:{value:'1'}});
       fireEvent.change(screen.getByLabelText('Servizio'),{target:{value:'second'}});
       expect(confirm).toHaveBeenCalled();
       expect(calls.some(c=>c.path.endsWith('/second'))).toBe(false);
       service={...service,revision:2,settings:{...service.settings,instructions:'Aggiornate altrove'}};
       fireEvent.click(screen.getByRole('button',{name:'Aggiorna'}));
       await screen.findByText('I criteri salvati sono cambiati.');
-      expect((screen.getByLabelText('Numero di candidate') as HTMLInputElement).value).toBe('1');
+      expect((screen.getByLabelText('Candidate locali') as HTMLInputElement).value).toBe('1');
       fireEvent.click(screen.getByRole('button',{name:'Carica i criteri salvati'}));
-      expect((screen.getByLabelText('Numero di candidate') as HTMLInputElement).value).toBe('2');
+      expect((screen.getByLabelText('Candidate locali') as HTMLInputElement).value).toBe('2');
     } finally {confirm.mockRestore();}
   });
   it('riapre un servizio archiviato conservando la revisione',async()=>{
@@ -191,7 +189,7 @@ describe('Revisione senza dati reali',()=>{
     const first=screen.getAllByRole('article')[0];
     expect(document.activeElement).toBe(first);
     fireEvent.keyDown(screen.getByLabelText('Istruzioni per la selezione'),{key:'x'});
-    fireEvent.keyDown(screen.getByLabelText('Numero di candidate'),{key:'ArrowRight'});
+    fireEvent.keyDown(screen.getByLabelText('Candidate locali'),{key:'ArrowRight'});
     expect(document.activeElement).toBe(first);
     expect(calls.some(c=>c.path.includes('/decisions/'))).toBe(false);
     fireEvent.keyDown(first,{key:'x'});
@@ -258,4 +256,40 @@ describe('Revisione senza dati reali',()=>{
     expect(location.hash).toBe('');
     expect(calls[0].path).toBe('/session');
   });
+});
+
+
+it('nasconde gli avvisi della proposta precedente dopo una modifica ai criteri',async()=>{
+  const obsolete='Il motore iniziale riconosce solo anteprime identiche';
+  service={...service,requires_analysis:true,proposal:{selected:['p0','p1'],groups:[],reasons:{},warnings:[obsolete],engine:'exact-preview-v1',stale:true}};
+  await workspace();
+  expect(screen.queryByText(obsolete)).toBeNull();
+  expect(screen.getByRole('status').textContent).toContain('Avvia la selezione per ottenere una nuova proposta');
+  expect(screen.getByText(/Risultati precedenti ·/)).toBeTruthy();
+  expect(calls.some(c=>c.path.endsWith('/analyze')||c.path.endsWith('/api-confirm'))).toBe(false);
+});
+
+it('mostra avanzamento e contesto dei risultati precedenti durante una nuova analisi',async()=>{
+  const obsolete='Vecchia quantità superata';
+  service={...service,status:'analyzing',job:{status:'running',completed:1,total:2,error:null},proposal:{selected:['p0','p1'],groups:[],reasons:{},warnings:[obsolete],engine:'exact-preview-v1'}};
+  await workspace();
+  expect(screen.queryByText(obsolete)).toBeNull();
+  expect(screen.getByText(/Analisi in corso · 1 \/ 2/).textContent).toContain('proposta precedente');
+  expect(calls.some(c=>c.path.endsWith('/analyze')||c.path.endsWith('/api-confirm'))).toBe(false);
+});
+
+
+it('riunisce i criteri precedenti in un solo testo mantenendo intatto il prefisso originale',async()=>{
+  const original='  Solo uccelli\nPreferisci ali aperte!  \n';
+  service={...service,settings:{...service.settings,instructions:original,service_criteria:['Conservare varianti'],subject_query:'uccelli in volo'}};
+  await workspace();
+  const text=screen.getByLabelText('Istruzioni per la selezione') as HTMLTextAreaElement;
+  expect(text.value.startsWith(original)).toBe(true);
+  expect(text.value).toContain('Conservare varianti');
+  expect(text.value).toContain('Soggetto da privilegiare: uccelli in volo');
+  expect(screen.queryByLabelText('Criteri del servizio, uno per riga')).toBeNull();
+  fireEvent.click(screen.getByRole('button',{name:'Salva criteri'}));
+  await waitFor(()=>expect(calls.some(c=>c.path.endsWith('/settings'))).toBe(true));
+  expect(calls.find(c=>c.path.endsWith('/settings'))?.body?.settings).toMatchObject({instructions:text.value,service_criteria:[],subject_query:''});
+  expect(calls.some(c=>c.path.endsWith('/analyze')||c.path.endsWith('/api-confirm'))).toBe(false);
 });
