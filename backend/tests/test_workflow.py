@@ -427,7 +427,7 @@ def test_invalid_local_responses_do_not_complete_a_tiny_selection(client, monkey
     from lrc_selection import vlm
     model_dir = tmp_path / 'fake-vlm'
     model_dir.mkdir()
-    (model_dir / 'config.json').write_text('{}')
+    (model_dir / 'config.json').write_text('{"model_type":"synthetic"}')
     (model_dir / 'fake.safetensors').write_text('synthetic only')
     monkeypatch.setenv('LRC_VLM_DIR', str(model_dir))
     monkeypatch.setattr(vlm, 'LocalVLM', lambda _: object())

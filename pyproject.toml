@@ -13,7 +13,7 @@ dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.32,<1", "pydantic>=2.10,<3", "P
 dev = ["pytest>=8,<10", "httpx>=0.28,<1", "lupa>=2.6,<3"]
 local-ai = ["torch>=2.6,<3", "transformers>=5.23,<6", "numpy>=2,<3"]
 
-local-instructions = ["mlx-vlm==0.3.9; platform_system == 'Darwin'", "transformers>=5.23,<6", "torch>=2.14,<3", "torchvision>=0.29,<1"]
+local-instructions = ["mlx-vlm==0.4.3; platform_system == 'Darwin'", "transformers>=5.23,<6", "torch>=2.14,<3", "torchvision>=0.29,<1"]
 
 [project.scripts]
 lrc-selection = "lrc_selection.cli:main"

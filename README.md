@@ -94,7 +94,7 @@ Vedere [audit e piano](docs/audit-plan.md). Le raccolte Classic locali facoltati
 
 ### Modello locale per istruzioni libere
 
-Sul Mac Apple Silicon: installare `.venv/bin/pip install -e '.[local-instructions]'`, poi eseguire `.venv/bin/python scripts/setup_local_model.py`. È un download esplicito di pesi, senza inviare foto; richiede diversi GB di spazio. Il backend rileva il modello nello spazio dati dell’app. Per riprodurre il runtime del collaudo usare requirements-local-ai-lock.txt.
+Sul Mac Apple Silicon: installare `.venv/bin/pip install -e '.[local-instructions]'`, poi eseguire `.venv/bin/python scripts/setup_local_model.py --model Qwen3.5-9B-MLX-4bit --activate`. È un download esplicito di pesi, senza inviare foto; richiede diversi GB di spazio. Il backend rileva il modello nello spazio dati dell’app. Per riprodurre il runtime del collaudo usare requirements-local-ai-lock.txt.
 
 Scegli un preset per copiare i suoi criteri e modificarli nel servizio, oppure parti senza preset e scrivi direttamente le istruzioni. L’analisi restituisce una proposta da rivedere. Confermarla modifica soltanto la selezione locale; le stelle richiedono ancora il piano e la conferma separata in Lightroom.
 

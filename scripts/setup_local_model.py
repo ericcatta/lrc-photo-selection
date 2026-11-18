@@ -3,21 +3,33 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
 
-REPO = 'mlx-community/Qwen3-VL-4B-Instruct-4bit'
-REVISION = '2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b'
+# Permit direct execution from a source checkout without installing the backend.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
+from lrc_selection.local_models import DEFAULT_MODEL, MODELS, activate_model, model_ready
+
+REPO = MODELS[DEFAULT_MODEL]['repo']
+REVISION = MODELS[DEFAULT_MODEL]['revision']
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Scarica il modello visivo locale Qwen3-VL 4B; nessuna fotografia viene inviata')
+def main(argv=None):
+    parser = argparse.ArgumentParser(description='Scarica un modello visivo locale; nessuna fotografia viene inviata')
     parser.add_argument('--data-dir', type=Path, default=Path.home() / 'Library/Application Support/LrC Photo Selection')
-    args = parser.parse_args()
+    parser.add_argument('--model', choices=tuple(MODELS), default=DEFAULT_MODEL)
+    parser.add_argument('--activate', action='store_true', help='Seleziona esplicitamente il modello dopo la verifica dei file')
+    args = parser.parse_args(argv)
     os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
     from huggingface_hub import snapshot_download
-    target = args.data_dir / 'models' / 'Qwen3-VL-4B-Instruct-4bit'
-    snapshot_download(REPO, revision=REVISION, local_dir=target,
+    spec = MODELS[args.model]
+    target = args.data_dir / 'models' / args.model
+    snapshot_download(spec['repo'], revision=spec['revision'], local_dir=target,
                       allow_patterns=['*.json', '*.safetensors', '*.txt', '*.jinja', '*.model', 'README.md', 'LICENSE*'])
-    (target / 'provenance.json').write_text(json.dumps({'repo': REPO, 'revision': REVISION, 'license': 'Apache-2.0'}))
+    if not model_ready(target):
+        raise ValueError('Configurazione o pesi del modello locale mancanti o incompleti')
+    (target / 'provenance.json').write_text(json.dumps({**spec, 'license': 'Apache-2.0'}))
+    if args.activate:
+        activate_model(args.data_dir, args.model)
     print('Modello locale disponibile. Nessuna analisi avviata.')
 
 

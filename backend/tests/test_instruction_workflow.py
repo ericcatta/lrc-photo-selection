@@ -13,7 +13,7 @@ from test_workflow import client, jpeg, manifest
 def instruction_model(client, monkeypatch):
     model_dir = client.app.state.store.root / 'models' / 'Qwen3-VL-4B-Instruct-4bit'
     model_dir.mkdir(parents=True)
-    (model_dir / 'config.json').write_text('{}')
+    (model_dir / 'config.json').write_text('{"model_type":"synthetic"}')
     (model_dir / 'synthetic.safetensors').write_bytes(b'SYNTHETIC TEST MARKER, NOT MODEL WEIGHTS')
     monkeypatch.setenv('LRC_VLM_DIR', str(model_dir))
     monkeypatch.setenv('LRC_SIGLIP_DIR', str(model_dir / 'absent-siglip'))

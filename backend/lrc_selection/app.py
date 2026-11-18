@@ -24,6 +24,7 @@ from .engine import analyze, effective_selected
 from .models import (Archive, BatchInput, CompleteImport, Decision, ImportManifest, ImportPhotos,
                      PresetInput, Receipt, Replace, Revision, SettingsUpdate)
 from .store import Store
+from .local_models import resolve_model
 
 MAX_PREVIEW_BYTES = 24 * 1024 * 1024
 Image.MAX_IMAGE_PIXELS = 50_000_000
@@ -589,8 +590,10 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
                 vision_path if vision_path.is_file() and os.access(vision_path, os.X_OK) else None)
 
     def instruction_component():
-        path = Path(os.environ.get('LRC_VLM_DIR', str(root / 'models' / 'Qwen3-VL-4B-Instruct-4bit')))
-        return path if (path / 'config.json').is_file() and list(path.glob('*.safetensors')) else None
+        try:
+            return resolve_model(root)
+        except ValueError as exc:
+            raise HTTPException(503, str(exc)) from exc
 
     @app.get('/api/capabilities')
     def capabilities():

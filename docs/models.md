@@ -1,6 +1,6 @@
 # Modelli: verifica preliminare, nessuna prestazione dimostrata
 
-Mac rilevato: M1 Max, 64 GB RAM. Qwen3-VL è ora in collaudo locale sul campione autorizzato Campione di prova; vedere gli aggiornamenti sotto.
+Mac rilevato: M1 Max, 64 GB RAM. Modello attivo: Qwen3.5-9B MLX 4 bit, runtime MLX-VLM 0.4.3, scelto esplicitamente dal proprietario dopo la prova sintetica. Il precedente Qwen3-VL-4B è stato rimosso. La copertura delle categorie non è ancora validata; vedere esiti e decisione finale sotto.
 
 | Candidato | Evidenza primaria | Decisione iniziale |
 |---|---|---|
@@ -68,3 +68,10 @@ Il 9B riconosce cerchio rosso e quadrato blu ma esclude ciascuna immagine perch�
 Report sintetici completi: [4B](benchmarks/local-model-4b.json), [9B](benchmarks/local-model-9b.json). Per ripetere il candidato occorre MLX-VLM 0.4.3; è stato valutato da un pacchetto estratto temporaneamente, senza aggiornare la .venv attiva. Revisione pesi 9B: `938d8919941c6e7efd3c7150eff7fe9d12afa631`. Il suo download viene rimosso dopo la prova negativa, evitando un secondo modello inutilizzato. Nessuna foto reale, decisione, stella o richiesta API coinvolta.
 
 Prima di cambiare modello, il criterio di accettazione resta: categorie distinte conservate nell'insieme, nessun obbligo inventato di compresenza nella singola foto, casi positivi e negativi corretti, quindi confronto umano sul campione reale. Non dichiarare risolto questo comportamento sulla base dei soli test unitari.
+
+
+### Decisione successiva del proprietario: attivare comunque Qwen3.5-9B
+
+Dopo aver letto l'esito negativo del controllo di copertura, il proprietario ha chiesto esplicitamente di sostituire il 4B con il 9B e rimuovere il precedente. La decisione iniziale di non sostituire, sopra riportata, è quindi superata. Si adotta Qwen3.5-9B MLX 4 bit, revisione `938d8919941c6e7efd3c7150eff7fe9d12afa631`, con MLX-VLM 0.4.3. Il limite sulla copertura delle categorie resta aperto: non è dichiarato risolto o validato. Nessuna nuova analisi delle fotografie viene avviata dall'installazione.
+
+Il modello attivo è selezionato esplicitamente in `local-model-selection.json` nello spazio dati locale. Lo script di installazione permette `--model Qwen3.5-9B-MLX-4bit --activate`; il caricamento durante l'analisi resta offline. Il precedente 4B viene eliminato solo dopo verifica dei file e della selezione attiva. SigLIP 2 è un encoder distinto e rimane, perché non è il modello sostituito.
