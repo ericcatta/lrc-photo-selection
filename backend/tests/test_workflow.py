@@ -421,3 +421,26 @@ def test_review_shortlist_does_not_warn_about_unaccepted_candidate_count(client)
     result = detail(client)
     assert len(result['selected_ids']) == 4  # Review proposal has not applied exclusions.
     assert result['proposal']['warnings'] == ['Copertura categoria ritratti da verificare.']
+
+
+def test_invalid_local_responses_do_not_complete_a_tiny_selection(client, monkeypatch, tmp_path):
+    from lrc_selection import vlm
+    model_dir = tmp_path / 'fake-vlm'
+    model_dir.mkdir()
+    (model_dir / 'config.json').write_text('{}')
+    (model_dir / 'fake.safetensors').write_text('synthetic only')
+    monkeypatch.setenv('LRC_VLM_DIR', str(model_dir))
+    monkeypatch.setattr(vlm, 'LocalVLM', lambda _: object())
+    monkeypatch.setattr(vlm, 'build_instruction_proposal', lambda *args: {
+        'diagnostics': {'invalid': 3, 'valid': 1, 'total': 4},
+        'interpretations': {'records': {}, 'comparisons': []},
+        'shortlist': ['u0:1'],
+    })
+    service = configure(client, imported(client), instructions='uccelli, ritratti, landscape', service_criteria=[], target=3)
+    result = run(client, service)
+    assert result['job']['status'] == 'failed'
+    assert '3 risposte non valide su 4' in result['job']['error']
+    assert result['requires_analysis']
+    assert len(result['selected_ids']) == 4
+    assert result['analysis_diagnostics']['invalid'] == 3
+    assert result.get('proposal') is None or result['proposal']['stale']

@@ -122,7 +122,6 @@ progress { width: 100%; accent-color: var(--accent); }
 .empty { max-width: 440px; margin: 12vh auto; }
 .empty label { margin: 20px 0 12px; }
 .empty-filter { padding: 32px 0; color: var(--muted); }
-.load-more { display: block; margin: 18px auto; }
 dialog { color: inherit; background: #f4f4f1; border: 1px solid #a9aea1; border-radius: 4px; width: min(970px,calc(100% - 28px)); max-height: 88vh; padding: 20px; box-shadow: 0 16px 64px #0004; }
 dialog::backdrop { background: #161b17a6; }
 dialog > .reviewhead { min-height: 40px; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-top: 0; }

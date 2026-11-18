@@ -99,7 +99,7 @@ def test_structured_generation_single_repair_and_strict_schema():
         return next(outputs)
     vlm._generate=generate
     assert vlm.interpret('birds',[])['summary']=='birds'
-    assert calls==[600,600]
+    assert calls==[1024,1024]
     vlm._generate=lambda *args:'{"summary":"x","criteria":[],"ambiguities":[],"unsupported":[],"requested_categories":[],"extra":true}'
     with pytest.raises(ValueError,match='strutturata'):
         vlm.interpret('birds',[])
@@ -215,7 +215,7 @@ def test_prompt_explains_mixed_categories_and_default_portrait_people(tmp_path):
     from PIL import Image
     vlm=LocalVLM.__new__(LocalVLM)
     prompts=[]
-    def structured(prompt,image,schema,max_tokens):
+    def structured(prompt,image,schema,max_tokens,**kwargs):
         prompts.append(prompt)
         return {}
     vlm._structured=structured
@@ -230,6 +230,94 @@ def test_prompt_explains_mixed_categories_and_default_portrait_people(tmp_path):
     assert 'Le preferenze esplicite prevalgono sul tuo giudizio di bellezza' in prompts[1]
     assert 'composizione, espressività e significato del momento' in prompts[1]
     assert 'non assegnare automaticamente 0.5 a tutte' in prompts[1]
-    assert 'non ridurre il punteggio contando difetti tecnici' in prompts[1]
+    assert 'non ridurre il punteggio contando difetti tecnici' in prompts[1].lower()
     assert 'registra i difetti in quality_issues' in prompts[1]
     assert 'Non sostituire un ritratto richiesto con un uccello più nitido' in prompts[1]
+
+
+def test_placeholder_and_copied_subject_list_are_rejected_without_guesses(tmp_path):
+    from lrc_selection.vlm import _validate_interpretation
+    base={'summary':'synthetic','criteria':[],'ambiguities':[],'unsupported':[],
+          'requested_categories':[{'id':'slug_stabile','description':'uccelli, ritratti, landscape'}]}
+    with pytest.raises(ValueError,match='segnaposto'):
+        Interpretation.model_validate(base)
+    base['requested_categories'][0]['id']='soggetti'
+    with pytest.raises(ValueError,match='sola categoria'):
+        _validate_interpretation(base,'uccelli, ritratti, landscape')
+    # General rule applies to other subject lists, not bird-specific substitution.
+    base['requested_categories'][0]['description']='architettura, automobili, fiori'
+    with pytest.raises(ValueError,match='sola categoria'):
+        _validate_interpretation(base,'architettura, automobili, fiori')
+    base['requested_categories']=[{'id':'architecture','description':'Architettura'},
+        {'id':'cars','description':'Automobili'},{'id':'flowers','description':'Fiori'}]
+    _validate_interpretation(base,'architettura, automobili, fiori')
+
+
+def test_repair_has_actual_parse_error_and_schema_without_response_echo():
+    vlm=LocalVLM.__new__(LocalVLM)
+    prompts=[]
+    answers=iter(['{"summary":"DO_NOT_ECHO",',json.dumps({'summary':'synthetic', 'criteria':[],
+        'ambiguities':[],'unsupported':[],'requested_categories':[]})])
+    def generate(prompt,image,max_tokens):
+        prompts.append((prompt,max_tokens))
+        return next(answers)
+    vlm._generate=generate
+    result=vlm.interpret('forme sintetiche',[])
+    assert result['requested_categories']==[]
+    assert len(prompts)==2 and all(tokens==1024 for _,tokens in prompts)
+    assert 'JSON Schema' in prompts[0][0]
+    assert 'slug_stabile' not in prompts[0][0] and 'id_categoria' not in prompts[0][0]
+    assert 'invalid_json' in prompts[1][0] and 'campi principali' in prompts[1][0]
+    assert 'DO_NOT_ECHO' not in prompts[1][0]
+
+
+def test_category_key_mismatch_is_repaired_with_exact_expected_keys(tmp_path):
+    from PIL import Image
+    vlm=LocalVLM.__new__(LocalVLM)
+    prompts=[]
+    data={'match':'yes','reason':'synthetic bird','scene':'synthetic','quality_issues':[],
+          'preference_score':.7,'category_matches':{'wrong':'yes'}}
+    answers=iter([json.dumps(data),json.dumps(data | {'category_matches':{'birds':'yes'}})])
+    def generate(prompt,image,max_tokens):
+        prompts.append(prompt)
+        assert max_tokens==1024
+        return next(answers)
+    vlm._generate=generate
+    preview=tmp_path/'synthetic.jpg'
+    Image.new('RGB',(10,10),'white').save(preview)
+    result=vlm.assess(preview,{'original_instructions':'birds',
+        'requested_categories':[{'id':'birds','description':'Birds'}]})
+    assert result['category_matches']=={'birds':'yes'}
+    assert len(prompts)==2
+    assert 'category_matches deve contenere esattamente' in prompts[1]
+    assert 'birds' in prompts[1]
+
+
+def test_diagnostics_mark_invalid_and_missing_as_incomplete_then_retry(tmp_path):
+    store,snapshot,vlm=fixture(tmp_path)
+    snapshot['photos'][0]['preview_ready']=False
+    vlm.fail=True
+    failed=build_instruction_proposal(store,snapshot,vlm)
+    assert failed['incomplete'] is True
+    assert failed['diagnostics']=={'total':3,'attempted':2,'valid':0,'invalid':2,
+        'missing_preview':1,'missing':1,'not_assessed':0,'yes':0,'no':0,'uncertain':3,
+        'error_counts':{'schema':2}}
+    assert any('analisi incompleta' in warning for warning in failed['warnings'])
+    vlm.fail=False
+    recovered=build_instruction_proposal(store,snapshot,vlm)
+    assert recovered['diagnostics']['invalid']==0
+    assert recovered['diagnostics']['valid']==2
+    assert len(vlm.assess_calls)==4  # invalid responses were not stored as evidence
+    snapshot['photos'][0]['preview_ready']=True
+    completed=build_instruction_proposal(store,snapshot,vlm)
+    assert completed['incomplete'] is False
+    assert completed['diagnostics']['valid']==3
+
+
+def test_local_reason_bound_does_not_change_shared_api_assessment_schema():
+    from lrc_selection.vlm import Assessment, LocalAssessment
+    data={'match':'yes','reason':'x'*200,'scene':'synthetic','quality_issues':[],
+          'preference_score':.5,'category_matches':{}}
+    assert Assessment.model_validate(data).reason==data['reason']
+    with pytest.raises(ValueError):
+        LocalAssessment.model_validate(data)

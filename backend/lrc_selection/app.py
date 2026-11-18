@@ -501,6 +501,23 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
                 if instruction_model is None:
                     instruction_model = LocalVLM(vlm_path)
                 semantic = build_instruction_proposal(store, snapshot, instruction_model, progress)
+                diagnostics = semantic.get('diagnostics', {})
+                if semantic.get('incomplete') or diagnostics.get('invalid', 0):
+                    with store.transaction() as failed_db:
+                        current = store.get(sid, failed_db)
+                        store.check_revision(current, start_revision)
+                        current['analysis_diagnostics'] = diagnostics
+                        current['interpretations'] = semantic['interpretations']
+                        if current.get('proposal'):
+                            current['proposal']['stale'] = True
+                        current['requires_analysis'] = True
+                        current['status'] = 'ready'
+                        current['job'] = {'status': 'failed', 'completed': diagnostics.get('valid', 0),
+                                          'total': len(snapshot['photos']),
+                                          'error': f"Analisi locale incompleta: {diagnostics.get('invalid', 0)} risposte non valide su {len(snapshot['photos'])}. Nessuna nuova selezione applicata. Tutte le foto restano disponibili; riprova l’analisi dopo la correzione del modello/formato."}
+                        current['revision'] += 1
+                        store.put(failed_db, current)
+                    return
                 if model_path and semantic['shortlist'] and not semantic.get('blocked'):
                     from .features import SiglipEncoder
                     from .semantic import rerank_instruction_shortlist
@@ -530,6 +547,7 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
                     s['job'] = {'status': 'interrupted', 'completed': 0, 'total': len(s['photos']), 'error': 'Decisioni o impostazioni cambiate durante l’analisi; riavviare.'}
                 else:
                     s['proposal'] = proposal
+                    s['analysis_diagnostics'] = (semantic or {}).get('diagnostics', {})
                     if semantic:
                         s['interpretations'] = semantic['interpretations']
                     s.pop('requires_analysis', None)
@@ -541,6 +559,9 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
             with store.transaction() as db:
                 s = store.get(sid, db)
                 s['job'] = {'status': 'failed', 'completed': 0, 'total': len(s['photos']), 'error': 'Analisi non riuscita. Dati e decisioni conservati.'}
+                s['requires_analysis'] = True
+                if s.get('proposal'):
+                    s['proposal']['stale'] = True
                 s['status'] = 'ready'
                 s['revision'] += 1
                 store.put(db, s)

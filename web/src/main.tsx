@@ -106,13 +106,12 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
   const [filter,setFilter]=useState<State|'all'>('all');
   const [shortlistOnly,setShortlistOnly]=useState(Boolean(s.proposal?.shortlist));
   const shortlistKey=JSON.stringify(s.proposal?.shortlist);
-  useEffect(()=>{setShortlistOnly(Boolean(s.proposal?.shortlist));setLimit(48);},[shortlistKey]);
+  useEffect(()=>{setShortlistOnly(Boolean(s.proposal?.shortlist));},[shortlistKey]);
   const [presetChoice,setPresetChoice]=useState(s.settings.preset_id?s.settings.preset_id+':'+s.settings.preset_version:'');
   const [group,setGroup]=useState('');
   const [compare,setCompare]=useState<string[]>([]);
   const [showCompare,setShowCompare]=useState(false);
   const [zoom,setZoom]=useState(100);
-  const [limit,setLimit]=useState(48);
   const [thumbnailSize,setThumbnailSize]=useState(230);
   const [plan,setPlan]=useState<Plan|null>(null);
   const [showRating,setShowRating]=useState(false);
@@ -146,7 +145,8 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
   const groups=s.proposal?.groups??[];
   const groupMap=new Map(groups.flatMap(g=>g.members.map(id=>[id,g] as const)));
   const shortlist=new Set(s.proposal?.shortlist??[]);
-  const visible=s.photos.filter(p=>(!shortlistOnly||shortlist.has(p.id))&&(filter==='all'||decision(p).state===filter)&&(!group||groupMap.get(p.id)?.id===group));
+  const failedProposal=s.job?.status==='failed'&&Boolean(s.proposal?.stale);
+  const visible=s.photos.filter(p=>(failedProposal||!shortlistOnly||shortlist.has(p.id))&&(filter==='all'||decision(p).state===filter)&&(!group||groupMap.get(p.id)?.id===group));
   if(chronological)visible.sort((a,b)=>{
     const time=(p:Photo)=>p.captured_at===null?Infinity:p.captured_at+(s.settings.camera_offsets[p.camera]??0);
     return time(a)-time(b)||a.id.localeCompare(b.id);
@@ -212,7 +212,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
       }
       if(e.metaKey||e.ctrlKey||e.altKey)return;
       if(key==='v'&&compare.length===2){e.preventDefault();setZoom(100);setShowCompare(true);return;}
-      const cards=visible.slice(0,limit);
+      const cards=visible;
       const index=cards.findIndex(p=>p.id===focused);
       if(key==='arrowleft'||key==='arrowright'){
         const photo=cards[Math.min(cards.length-1,Math.max(0,index+(key==='arrowleft'?-1:1)))];
@@ -240,7 +240,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
   return <>
     <div className="workspace">
       <header className="top">
-        <div className="service-heading"><p className="eyebrow">Servizio importato</p><h1>{s.title}</h1><p className="selection-count">{!currentProposal&&s.proposal?'Risultati precedenti · ':''}{s.proposal?.shortlist&&!s.proposal.shortlist_accepted ? `${shortlist.size} proposte da rivedere · ${s.photos.length} foto disponibili` : `${selectedIds.size} candidate su ${s.photos.length} foto`}</p></div>
+        <div className="service-heading"><p className="eyebrow">Servizio importato</p><h1>{s.title}</h1><p className="selection-count">{!currentProposal&&s.proposal&&!failedProposal?'Risultati precedenti · ':''}{failedProposal?`${s.photos.length} foto disponibili · ${selectedIds.size} candidate correnti`:s.proposal?.shortlist&&!s.proposal.shortlist_accepted ? `${shortlist.size} proposte da rivedere · ${s.photos.length} foto disponibili` : `${selectedIds.size} candidate su ${s.photos.length} foto`}</p></div>
         <div className="run-actions"><button disabled={pending||running(s)||draftChanged||s.status!=='ready'} onClick={()=>void archive()}>{s.archived?'Riapri servizio':'Archivia servizio'}</button>
         <button className="primary" disabled={busy||Boolean(s.proposal?.shortlist&&!s.proposal.shortlist_accepted)||s.requires_analysis||s.proposal?.stale||!selectedIds.size||draftChanged||s.status!=='ready'} onClick={()=>{setPlan(null);setShowRating(true);}}>Rivedi le stelle <span aria-hidden="true">→</span></button></div>
       </header>
@@ -248,19 +248,19 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
         {error&&<p role="alert" className="warning">{error}</p>}
         {s.archived&&<p role="status" className="warning">Servizio archiviato. Riaprilo per continuare la revisione.</p>}
         {s.status==='applying'&&<p role="status" className="warning">Applicazione stelle in corso. Completa o riprendi dal plugin.</p>}
-        {analysisInProgress?<p role="status" className="warning">Analisi in corso · {s.job?.completed??0} / {s.job?.total??s.photos.length}. {s.proposal?'I risultati visibili appartengono alla proposta precedente.':'La nuova proposta sarà disponibile al termine.'}</p>:outdatedProposal?<p role="status" className="warning">Impostazioni o foto aggiornate. Avvia la selezione per ottenere una nuova proposta; i risultati precedenti non descrivono i criteri attuali.</p>:s.proposal?.warnings.map((w,i)=><p key={i} className="warning">{w}</p>)}
+        {failedProposal?<p role="alert" className="warning">{s.job?.error??'Analisi non riuscita: nessuna nuova proposta valida.'} Tutte le foto restano disponibili per la revisione. Nessun tentativo viene avviato automaticamente.</p>:analysisInProgress?<p role="status" className="warning">Analisi in corso · {s.job?.completed??0} / {s.job?.total??s.photos.length}. {s.proposal?'I risultati visibili appartengono alla proposta precedente.':'La nuova proposta sarà disponibile al termine.'}</p>:outdatedProposal?<p role="status" className="warning">Impostazioni o foto aggiornate. Avvia la selezione per ottenere una nuova proposta; i risultati precedenti non descrivono i criteri attuali.</p>:s.proposal?.warnings.map((w,i)=><p key={i} className="warning">{w}</p>)}
         {currentProposal&&selectedIds.size<s.settings.target&&<p className="warning">La revisione corrente è sotto il numero richiesto ({s.settings.target}).</p>}
         <div className="reviewhead">
           <div className="review-title"><h2>Provino</h2><span>{visible.length} foto</span></div>
           <div className="review-filters">
-            <label>Stato<select value={filter} onChange={e=>{setFilter(e.target.value as State|'all');setLimit(48);}}><option value="all">Tutte</option>{states.map(x=><option key={x} value={x}>{labels[x]}</option>)}</select></label>
-            {groups.length>0&&<label>Gruppo<select value={group} onChange={e=>{setGroup(e.target.value);setLimit(48);}}><option value="">Tutti</option>{groups.map((g,i)=><option key={g.id} value={g.id}>Gruppo {i+1} · {g.members.length} foto</option>)}</select></label>}
+            <label>Stato<select value={filter} onChange={e=>{setFilter(e.target.value as State|'all');}}><option value="all">Tutte</option>{states.map(x=><option key={x} value={x}>{labels[x]}</option>)}</select></label>
+            {groups.length>0&&<label>Gruppo<select value={group} onChange={e=>{setGroup(e.target.value);}}><option value="">Tutti</option>{groups.map((g,i)=><option key={g.id} value={g.id}>Gruppo {i+1} · {g.members.length} foto</option>)}</select></label>}
             <label className="thumbnail-control">Anteprime<input aria-label="Dimensione anteprime" type="range" min={170} max={330} step={10} value={thumbnailSize} onChange={e=>setThumbnailSize(e.target.valueAsNumber)}/></label>
             <button disabled={compare.length!==2} onClick={()=>{setZoom(100);setShowCompare(true);}}>Confronta ({compare.length}/2)</button>
           </div>
         </div>
         <div className="review-history">
-          {s.proposal?.shortlist&&<><button className="primary" disabled={busy||draftChanged||s.proposal.stale||!shortlist.size} onClick={()=>setShowAccept(true)}>Usa questa proposta ({shortlist.size})</button><label className="check"><input type="checkbox" checked={shortlistOnly} onChange={e=>{setShortlistOnly(e.target.checked);setLimit(48);}}/>Proposta da rivedere ({shortlist.size})</label><span className="hint">Proposta automatica separata dalle {selectedIds.size} candidate correnti</span></>}
+          {s.proposal?.shortlist&&!failedProposal&&<><button className="primary" disabled={busy||draftChanged||s.proposal.stale||!shortlist.size} onClick={()=>setShowAccept(true)}>Usa questa proposta ({shortlist.size})</button><label className="check"><input type="checkbox" checked={shortlistOnly} onChange={e=>{setShortlistOnly(e.target.checked);}}/>Proposta da rivedere ({shortlist.size})</label><span className="hint">Proposta automatica separata dalle {selectedIds.size} candidate correnti</span></>}
           <button disabled={busy||!s.can_undo} onClick={()=>void changeHistory('undo')}>Annulla decisione</button>
           <button disabled={busy||!s.can_redo} onClick={()=>void changeHistory('redo')}>Ripristina decisione</button>
           <label className="check"><input type="checkbox" checked={chronological} onChange={e=>setChronological(e.target.checked)}/>Ordine cronologico</label>
@@ -268,7 +268,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
         </div>
         {visible.length===0&&<p className="empty-filter">{shortlistOnly&&shortlist.size===0?'Nessuna foto proposta: rivedi istruzioni e avvisi. Tutte le foto restano disponibili disattivando il filtro.':'Nessuna foto corrisponde ai filtri.'}</p>}
         <div className="grid" style={{'--thumbnail-size': `${thumbnailSize}px`} as CSSProperties}>
-          {visible.slice(0,limit).map((photo,index)=>{
+          {visible.map((photo,index)=>{
             const d=decision(photo);const g=groupMap.get(photo.id);const suggestion=suggestions.get(photo.id);
             return <article className={'card state-'+d.state+(compare.includes(photo.id)?' is-compared':'')} key={photo.id} id={'photo-'+photo.id} tabIndex={0} onFocus={()=>setFocused(photo.id)}>
               <div className="photo-topline"><span>{String(index+1).padStart(2,'0')}</span><span>{labels[d.state]}{d.locked?' · Bloccata':''}</span></div>
@@ -295,7 +295,6 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
             </article>;
           })}
         </div>
-        {visible.length>limit&&<button className="load-more" onClick={()=>setLimit(limit+48)}>Mostra altre foto ({visible.length-limit})</button>}
         <footer className="gallery-footer"><span>{s.proposal?'Proposta locale · revisione manuale disponibile':'Selezione manuale · tutte le foto iniziano candidate'}</span><span>Escludere non cancella il file</span></footer>
       </section>
       <aside className="inspector" aria-label="Strumenti di selezione">

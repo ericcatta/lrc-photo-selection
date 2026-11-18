@@ -293,3 +293,37 @@ it('riunisce i criteri precedenti in un solo testo mantenendo intatto il prefiss
   expect(calls.find(c=>c.path.endsWith('/settings'))?.body?.settings).toMatchObject({instructions:text.value,service_criteria:[],subject_query:''});
   expect(calls.some(c=>c.path.endsWith('/analyze')||c.path.endsWith('/api-confirm'))).toBe(false);
 });
+
+it('rende tutte le foto filtrate scorribili e navigabili oltre la precedente pagina di 48',async()=>{
+  const template=service.photos[0];
+  service={...service,photos:Array.from({length:60},(_,i)=>({...template,id:'p'+i,uuid:'u'+i,local_id:i,filename:'scroll-'+i+'.jpg',preview_ready:true}))};
+  await workspace();
+  const cards=screen.getAllByRole('article');
+  expect(cards).toHaveLength(60);
+  expect(screen.queryByRole('button',{name:/Mostra altre foto/})).toBeNull();
+  expect(screen.getByAltText('scroll-59.jpg').getAttribute('loading')).toBe('lazy');
+  act(()=>cards[47].focus());
+  fireEvent.keyDown(cards[47],{key:'ArrowRight'});
+  expect(document.activeElement).toBe(cards[48]);
+  fireEvent.change(screen.getByLabelText('Stato'),{target:{value:'excluded'}});
+  expect(screen.queryAllByRole('article')).toHaveLength(0);
+  fireEvent.change(screen.getByLabelText('Stato'),{target:{value:'all'}});
+  expect(screen.getAllByRole('article')).toHaveLength(60);
+  expect(calls.some(c=>c.method!=='GET')).toBe(false);
+});
+
+it('mostra tutte le foto e l’errore dopo un’analisi fallita con una vecchia shortlist',async()=>{
+  const template=service.photos[0];
+  const photos=Array.from({length:160},(_,i)=>({...template,id:'p'+i,uuid:'u'+i,local_id:i,filename:'failed-'+i+'.jpg',preview_ready:true}));
+  service={...service,photos,requires_analysis:true,job:{status:'failed',completed:160,total:160,error:'150 risposte su 160 non valide. Rivedi la configurazione del modello.'},proposal:{selected:photos.map(p=>p.id),shortlist:['p0','p1'],groups:[],reasons:{},warnings:['Vecchio avviso non valido'],engine:'old-test',stale:true}};
+  await workspace();
+  expect(screen.getAllByRole('article')).toHaveLength(160);
+  expect(screen.getByText('160 foto disponibili · 160 candidate correnti')).toBeTruthy();
+  expect(screen.queryByText(/2 proposte da rivedere/)).toBeNull();
+  expect(screen.queryByRole('checkbox',{name:'Proposta da rivedere (2)'})).toBeNull();
+  expect(screen.queryByRole('button',{name:'Usa questa proposta (2)'})).toBeNull();
+  const gallery=screen.getByRole('region',{name:'Area di revisione'});
+  expect(within(gallery).getByRole('alert').textContent).toContain('150 risposte su 160 non valide');
+  expect(screen.queryByText('Vecchio avviso non valido')).toBeNull();
+  expect(calls.some(c=>c.path.endsWith('/analyze')||c.path.endsWith('/api-confirm'))).toBe(false);
+});

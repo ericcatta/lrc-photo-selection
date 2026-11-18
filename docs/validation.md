@@ -82,3 +82,11 @@ Smoke browser API completo (`scripts/api_browser_smoke.mjs`): stima senza chiama
 Entrambi gli smoke browser sono passati con sole fixture sintetiche. Il flusso API ha eseguito tre richieste simulate: interpretazione, una valutazione riutilizzata per due anteprime identiche, confronto globale. Stima senza trasporto, consenso esplicito, testo originale intatto e ricomposizione 1→2 senza nuove richieste. Screenshot desktop/mobile ispezionati.
 
 Backend riavviato senza analisi attive; verifica in sola lettura del servizio reale: nessun invio, consumo o riserva API. La precisione del nuovo riconoscimento di categorie e del confronto globale su Campione di prova resta da verificare con la prova manuale dell’utente. I risultati precedenti non sono stati ricalcolati automaticamente. Per usare la nuova logica locale avviare una nuova analisi; per OpenAI ricalcolare la stima, poiché i piani precedenti non comprendono il confronto globale.
+
+## 2026-11-18 — Risposte locali incomplete e scorrimento
+
+Diagnosi in sola lettura del test autorizzato Campione di prova: 150 risposte non valide su 160, 8 non corrispondenti e 2 corrispondenti. La precedente pipeline dichiarava comunque completata la proposta. Una categoria conteneva inoltre il segnaposto letterale del prompt invece dei tre soggetti richiesti. La causa precisa degli output non validi non è dimostrabile senza gli output grezzi, che non erano conservati.
+
+Prompt locale v6: schema compatto, massimo 1024 token, categorie validate durante il tentativo di riparazione, rifiuto dei segnaposto. Cache precedente invalidata tramite versione. Le risposte incomplete impediscono una nuova proposta e mantengono le decisioni; la vecchia proposta è segnalata come obsoleta. Nessuna garanzia di qualità del modello deriva dai test sintetici. Il numero richiesto non giustifica inventare corrispondenze: una proposta incompleta richiede correzione/verifica.
+
+Interfaccia: tutte le schede del filtro sono scorribili senza pulsante di caricamento; anteprime lazy per contenere il carico. Test: 140 backend superati (test Apple Vision escluso perché il processo helper non è disponibile nella sandbox), 34 frontend superati e build riuscita. Nessuna nuova inferenza reale o richiesta OpenAI eseguita durante questa correzione.
