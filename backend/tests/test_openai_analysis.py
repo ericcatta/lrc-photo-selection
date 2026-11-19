@@ -404,10 +404,12 @@ def test_ambiguous_interpretation_does_not_claim_global_comparison(client):
         return result
     runner.transport = ambiguous
     confirm(client, estimate(client, service).json()).raise_for_status()
-    assert wait(client)['job']['status'] == 'completed'
-    proposal = client.get('/api/services/test-service').json()['proposal']
-    assert any('confronto globale non eseguiti' in warning for warning in proposal['warnings'])
-    assert not any('confronto globale dei provini' in warning for warning in proposal['warnings'])
+    assert wait(client)['job']['status'] == 'blocked'
+    current = client.get('/api/services/test-service').json()
+    assert current['proposal'] == service['proposal']
+    assert current['workflow']['phase'] == 'configure'
+    assert current['workflow']['blocked_reasons'] == ['Chiarire il soggetto']
+    assert not current['workflow']['proposal_ready']
 
 
 def test_direct_api_clears_pending_local_analysis_after_actual_comparison(client):
@@ -583,3 +585,72 @@ def test_invalid_sixteenth_photo_is_retained_and_remaining_authorized_calls_cont
         assert 15 not in saved['collection']['ranking']
         assert all(db.execute('SELECT body FROM cache WHERE key=?', (photo['cache_key'],)).fetchone()
                    for photo in saved['photos'][:15])
+
+
+def test_general_quality_diversity_request_needs_no_subject_category(client):
+    runner, service = setup(client)
+    original = 'seleziona le migliori ma mantieni variabilità nel contesto e nelle foto'
+    with client.app.state.store.transaction() as db:
+        service['settings'].update(instructions=original, service_criteria=[])
+        client.app.state.store.put(db, service)
+    calls = []
+    def transport(payload, key):
+        calls.append(payload)
+        if payload['text']['format']['name'] == 'requested_categories':
+            developer = payload['input'][0]['content'][0]['text']
+            assert 'requested_categories deve essere []' in developer
+            assert 'MAI categorie di soggetti' in developer
+            assert payload['input'][1]['content'][0]['text'] == original
+        return reply(payload)
+    runner.transport = transport
+    confirm(client, estimate(client, service).json()).raise_for_status()
+    assert wait(client)['job']['status'] == 'completed'
+    current = client.get('/api/services/test-service').json()
+    assert len(current['proposal']['shortlist']) == 1
+    assert current['proposal']['instruction_interpretation']['requested_categories'] == []
+    assert not current['workflow']['blocked']
+    assert [p['text']['format']['name'] for p in calls] == ['requested_categories', 'photo_assessment', 'photo_assessment', 'collection_ranking']
+
+
+def test_new_interpretation_cache_does_not_discard_existing_photo_assessments(client):
+    runner, service = setup(client)
+    runner.transport = lambda payload, key: reply(payload)
+    first = estimate(client, service).json()
+    confirm(client, first).raise_for_status()
+    wait(client)
+    current = client.get('/api/services/test-service').json()
+    with runner.db() as db:
+        previous = runner.plan(db, service['id'], first['plan_id'])
+        # A legacy bad interpretation can remain stored but cannot hit v2 keys.
+        old_key = api_module._hash(['interpretation', previous['model'], previous['instructions'], previous['criteria'], previous['subject_query'], api_module.SCHEMA_VERSION])
+        db.execute('DELETE FROM cache WHERE key=?', (previous['interpretation_key'],))
+        db.execute('INSERT OR REPLACE INTO cache VALUES (?,?)', (old_key, json.dumps({'requested_categories': [], 'ambiguities': ['Chiarire il soggetto'], 'unsupported': []})))
+    plan = estimate(client, current).json()
+    assert plan['cached_count'] == 2 and plan['uncached_count'] == 0
+    assert plan['interpretation_request_count'] == 1
+
+
+def test_legacy_blocked_plan_exposes_resume_without_rewriting_saved_data(client):
+    runner, service = setup(client)
+    plan = estimate(client, service).json()
+    with runner.db() as db:
+        old = runner.plan(db, service['id'], plan['plan_id'])
+        old.update(status='completed', interpretation={'requested_categories': [], 'ambiguities': ['Specificare'], 'unsupported': []})
+        runner.save(db, old)
+    status = client.get('/api/services/test-service/api-status').json()
+    assert status['job']['status'] == 'blocked'
+    assert status['resume']['photo_ids'] == ['u0:1', 'u1:1']
+    with runner.db() as db:
+        assert runner.plan(db, service['id'], plan['plan_id'])['status'] == 'completed'
+
+
+def test_old_interpretation_estimate_requires_new_confirmation_before_network(client):
+    runner, service = setup(client)
+    plan = estimate(client, service).json()
+    with runner.db() as db:
+        old = runner.plan(db, service['id'], plan['plan_id'])
+        old.pop('interpretation_version')
+        runner.save(db, old)
+    runner.transport = lambda *_: pytest.fail('Old estimate must not transmit')
+    response = confirm(client, plan)
+    assert response.status_code == 409 and 'nuova stima' in response.json()['detail']

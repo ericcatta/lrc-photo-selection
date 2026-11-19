@@ -447,3 +447,57 @@ it('porta il focus al titolo del passaggio e lascia il provino raggiungibile',as
   expect(screen.getAllByRole('article')).toHaveLength(2);
   expect(calls.some(x=>x.method!=='GET')).toBe(false);
 });
+
+it('mostra zero proposte senza sostituirle con le candidate precedenti e lascia tutte le foto rivedibili',async()=>{
+  service={...service,workflow:workflow('review'),selected_ids:['p0','p1'],proposal:{selected:['p0','p1'],shortlist:[],groups:[],reasons:{},warnings:[],engine:'synthetic'}};
+  await workspace();
+  expect(screen.getByText('0 proposte da rivedere · 2 foto disponibili')).toBeTruthy();
+  expect(screen.getByText(/Nessuna foto selezionata\. Tutte le foto sono visibili/)).toBeTruthy();
+  expect(screen.queryByText(/Rivedi le 2 foto selezionate/)).toBeNull();
+  expect((screen.getByRole('button',{name:'Conferma selezione'}) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getAllByRole('article')).toHaveLength(2);
+  expect(screen.getAllByText('Non selezionata')).toHaveLength(2);
+  expect((screen.getByLabelText('Mostra') as HTMLSelectElement).value).toBe('all');
+  expect(screen.getByRole('button',{name:'Rivedi i criteri'})).toBeTruthy();
+  expect(calls.some(x=>x.method!=='GET')).toBe(false);
+});
+it('include manualmente una foto da una proposta vuota e conferma il conteggio effettivo',async()=>{
+  service={...service,workflow:workflow('review'),selected_ids:['p0','p1'],proposal:{selected:['p0','p1'],shortlist:[],groups:[],reasons:{},warnings:[],engine:'synthetic'}};
+  await workspace();
+  fireEvent.click(screen.getByRole('button',{name:'Includi sintetica-1.jpg'}));
+  await screen.findByText('Inclusa manualmente');
+  expect(screen.getByText('1 proposte da rivedere · 2 foto disponibili')).toBeTruthy();
+  expect(screen.getAllByRole('article')).toHaveLength(2);
+  expect((screen.getByLabelText('Mostra') as HTMLSelectElement).value).toBe('all');
+  expect((screen.getByRole('button',{name:'Conferma selezione'}) as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(screen.getByRole('button',{name:'Conferma selezione'}));
+  const dialog=await screen.findByRole('dialog',{name:'Usa la proposta come selezione'});
+  expect(within(dialog).getByText(/Conferma 1 foto nella selezione, comprese le tue modifiche manuali/)).toBeTruthy();
+  expect(calls.find(x=>x.path.endsWith('/decisions/p1'))?.body).toEqual({revision:1,state:'candidate',locked:false,confirm_last:false});
+  expect(calls.some(x=>x.path.includes('/rating-')||x.path.endsWith('/api-confirm'))).toBe(false);
+});
+it('sovrappone le decisioni manuali alla proposta nei filtri e nelle etichette',async()=>{
+  service={...service,workflow:workflow('review'),decisions:{p0:{state:'excluded',locked:false},p1:{state:'candidate',locked:false}},proposal:{selected:['p0','p1'],shortlist:['p0'],groups:[],reasons:{},warnings:[],engine:'synthetic'}};
+  await workspace();
+  expect(screen.getAllByRole('article')).toHaveLength(1);
+  expect(screen.getByText('sintetica-1.jpg')).toBeTruthy();
+  expect(screen.getByText('1 proposte da rivedere · 2 foto disponibili')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Mostra'),{target:{value:'all'}});
+  expect(screen.getAllByRole('article')).toHaveLength(2);
+  expect(screen.getByText('Inclusa manualmente')).toBeTruthy();
+  expect(screen.getByText('Esclusa manualmente')).toBeTruthy();
+  expect(screen.getByRole('button',{name:'Includi sintetica-0.jpg'})).toBeTruthy();
+  expect(screen.getByRole('button',{name:'Escludi sintetica-1.jpg'})).toBeTruthy();
+});
+it('rende visibile il motivo di un’analisi bloccata e offre la correzione dei criteri',async()=>{
+  service={...service,workflow:{...workflow('configure','hybrid'),blocked:true,blocked_reasons:['Indica se desideri una selezione generale.']},settings:{...service.settings,mode:'hybrid',workflow_path:'hybrid'},job:{kind:'openai',status:'blocked',completed:0,total:2,error:'Istruzioni da chiarire'}};
+  await workspace();
+  const reason=screen.getByText('Indica se desideri una selezione generale.');
+  expect(reason.closest('[role=alert]')).toBeTruthy();
+  expect(reason.closest('details')).toBeNull();
+  expect(screen.getByRole('heading',{name:'Configura la selezione'})).toBeTruthy();
+  expect(calls.some(x=>x.method!=='GET')).toBe(false);
+  fireEvent.click(screen.getByRole('button',{name:'Prepara una nuova stima OpenAI'}));
+  await waitFor(()=>expect(calls.some(x=>x.path.endsWith('/api-status'))).toBe(true));
+  expect(calls.some(x=>x.path.endsWith('/analyze')||x.path.endsWith('/api-confirm'))).toBe(false);
+});

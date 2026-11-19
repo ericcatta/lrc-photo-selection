@@ -23,7 +23,8 @@ beforeEach(()=>{
 });
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 it('estimates locally and only sends after explicit acknowledgement and confirmation',async()=>{
-  render(<APIReview service={service} dirty={false} disabled={false} update={vi.fn()}/>);
+  const started=vi.fn();
+  render(<APIReview service={service} dirty={false} disabled={false} update={vi.fn()} onStarted={started}/>);
   expect(calls).toHaveLength(0);
   fireEvent.click(screen.getByRole('button',{name:'Stima e rivedi invio a OpenAI'}));
   await waitFor(()=>expect((screen.getByLabelText('Budget complessivo del servizio (USD)') as HTMLInputElement).value).toBe(''));
@@ -40,6 +41,8 @@ it('estimates locally and only sends after explicit acknowledgement and confirma
   fireEvent.click(submit);
   await waitFor(()=>expect(calls.some(c=>c.url.endsWith('/api-confirm'))).toBe(true));
   expect(calls.find(c=>c.url.endsWith('/api-confirm'))?.body).toEqual({plan_id:'plan-1',confirm:true});
+  await waitFor(()=>expect(screen.queryByRole('dialog')).toBeNull());
+  expect(started).toHaveBeenCalledTimes(1);
 });
 it('allows adding alternatives to the exact sample and clears the estimate on budget changes',async()=>{
   render(<APIReview service={service} dirty={false} disabled={false} update={vi.fn()}/>);
@@ -189,4 +192,22 @@ it('warns when old sample cannot be reused and does not send',async()=>{
   await screen.findByText('Criteri cambiati: prepara una nuova stima.');
   expect(screen.getByLabelText(/sintetica.jpg/)).toBeTruthy();
   expect(calls.every(c=>c.url.endsWith('/api-status'))).toBe(true);
+});
+
+it('keeps confirmation open when the server rejects the send',async()=>{
+  const originalFetch=globalThis.fetch;
+  vi.stubGlobal('fetch',vi.fn(async(url:string,init?:RequestInit)=>url.endsWith('/api-confirm')
+    ?new Response(JSON.stringify({detail:'Stima superata: prepara una nuova stima.'}),{status:409})
+    :originalFetch(url,init)));
+  const started=vi.fn();
+  render(<APIReview service={service} dirty={false} disabled={false} update={vi.fn()} onStarted={started}/>);
+  fireEvent.click(screen.getByRole('button',{name:'Stima e rivedi invio a OpenAI'}));
+  await waitFor(()=>expect((screen.getByRole('button',{name:'Calcola stima senza inviare foto'}) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole('button',{name:'Calcola stima senza inviare foto'}));
+  await screen.findByRole('heading',{name:'Riepilogo da confermare'});
+  fireEvent.click(screen.getByLabelText('Confermo l’invio a OpenAI di queste anteprime con il mio testo originale e il limite di costo indicato.'));
+  fireEvent.click(screen.getByRole('button',{name:'Conferma e invia a OpenAI'}));
+  await screen.findByText('Stima superata: prepara una nuova stima.');
+  expect(screen.getByRole('dialog')).toBeTruthy();
+  expect(started).not.toHaveBeenCalled();
 });

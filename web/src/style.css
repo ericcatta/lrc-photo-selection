@@ -202,3 +202,4 @@ dialog form label { margin-bottom: 15px; }
 .workspace{grid-template-areas:'heading heading' 'workflow workflow' 'gallery inspector'}.workflow-panel{grid-area:workflow}
 @media(max-width:760px){.workspace{grid-template-areas:'heading' 'workflow' 'inspector' 'gallery'}}
 @media(max-width:760px){.workflow-panel{position:sticky;top:0;max-height:45vh;overflow:auto}}
+.empty-selection{padding:12px 14px;border:1px solid var(--border);background:var(--panel);font-size:13px;margin:12px 0}.selection-included{border-color:#738574}.selection-outside .photo-topline{color:var(--muted)}.selection-tag{display:block;margin-bottom:7px}.selection-action{display:flex;justify-content:flex-end;margin:8px 0}.selection-action button[aria-pressed=true]{background:#e4e9e2;border-color:#899887}

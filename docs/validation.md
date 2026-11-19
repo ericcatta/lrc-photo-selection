@@ -164,3 +164,33 @@ precedente di 4 stelle applicate; nessuna analisi o nuova applicazione eseguita.
 Il rendering nativo della guida e l’abilitazione del pulsante in Lightroom restano
 da collaudare manualmente dopo ricaricamento del plugin. Il precedente successo
 manuale del flusso non sostituisce il collaudo di questi nuovi dialoghi.
+
+
+### 2026-11-19 — Avvio API, revisione manuale e proposta vuota
+
+La conferma API riuscita chiude il riepilogo e porta al progresso Analizza;
+un rifiuto del server lascia il dialogo aperto con il motivo. La vista completa
+indica appartenenza alla selezione e offre Includi/Escludi. Conteggi, filtri e
+accettazione usano la proposta con le decisioni manuali sovrapposte. Una proposta
+vuota mostra tutte le foto e permette di costruire esplicitamente una selezione.
+
+La richiesta generale di qualità e variabilità viene descritta al modello come
+valida senza categorie di soggetti obbligatorie. Nuova versione della cache di
+interpretazione e confronto; chiavi delle valutazioni fotografiche preservate.
+Le vere ambiguità interrompono il flusso come blocked, senza applicare una proposta
+vuota; riconosciuti in sola lettura anche i vecchi casi completed con zero foto
+valutate. L’accettazione manuale esplicita permette il ritorno in Lightroom senza
+cancellare la diagnostica del blocco.
+
+200 test backend superati (helper Apple Vision escluso), 53 frontend e build
+riusciti. Verificato in sola lettura il caso segnalato: fase Configura, blocco
+esplicito, campione precedente di nove foto recuperabile, zero valutazioni
+fotografiche completate. Nessuna nuova chiamata reale o modifica alle foto.
+La nuova interpretazione del caso reale resta da provare con nuova stima e
+conferma dell’utente; i test usano risposte simulate.
+
+Entrambi gli smoke browser aggiornati superati: chiusura automatica dopo conferma,
+riapertura dettagli, zero invii reali, modifica della quantità senza nuove chiamate,
+proposta vuota con tutte le sei fixture visibili, inclusione/esclusione manuale
+con conferma di copertura e accettazione esatta di una foto. Nessun overflow a
+390 pixel. Verificata visivamente la distinzione selezionata/non selezionata.

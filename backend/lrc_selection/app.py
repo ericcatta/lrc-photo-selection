@@ -237,11 +237,16 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
             if row:
                 receipt_revision = json.loads(row['body'])['revision'] + 1
         result['workflow'] = workflow_summary(service, receipt_revision)
+        if result['workflow']['blocked'] and job.get('status') == 'completed':
+            result['job'] = job | {'status': 'blocked', 'error': 'Richiesta da chiarire: ' + '; '.join(result['workflow']['blocked_reasons'])}
         result['selected_ids'] = effective_selected(service)
         result['can_undo'] = service.get('decision_cursor', 0) > 0
         result['can_redo'] = service.get('decision_cursor', 0) < len(service.get('decision_history', []))
         if service.get('proposal'):
             proposal = deepcopy(service['proposal'])
+            if 'shortlist' in proposal:
+                from .engine import effective_shortlist
+                proposal['effective_shortlist'] = effective_shortlist(service)
             selected = set(result['selected_ids'])
             uncovered = 0
             for group in proposal['groups']:
@@ -440,14 +445,19 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
             proposal = s.get('proposal') or {}
             if 'shortlist' not in proposal or proposal.get('stale') or not body.confirm_last:
                 raise HTTPException(409, 'Rivedere e confermare una proposta aggiornata prima di applicarla')
-            selected = set(proposal['shortlist'])
+            from .engine import effective_shortlist
+            selected = set(effective_shortlist(s))
             review = set(proposal.get('review_ids', []))
             if not selected:
                 raise HTTPException(409, 'Nessuna corrispondenza proposta: nessuna decisione modificata')
             changes = {p['id']: {'state': ('review' if p['id'] in review else 'candidate') if p['id'] in selected else 'excluded', 'locked': False}
                        for p in s['photos'] if p['id'] not in s['decisions']}
+            from .workflow import workflow_summary
+            accepted_after_block = workflow_summary(s)['blocked']
             record_decisions(s, changes)
             s['proposal']['shortlist_accepted'] = True
+            if accepted_after_block:
+                s['proposal']['accepted_after_block'] = True
             store.put(db, s)
         return present(s)
 

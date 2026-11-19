@@ -1,5 +1,5 @@
 """Read-only, versioned navigation state. Never grants permission for actions."""
-from .engine import effective_selected
+from .engine import effective_selected, effective_shortlist
 
 
 def workflow_summary(service, receipt_revision=None):
@@ -8,7 +8,12 @@ def workflow_summary(service, receipt_revision=None):
     proposal = service.get('proposal') or {}
     job = service.get('job') or {}
     stale = bool(service.get('requires_analysis') or proposal.get('stale'))
-    ready = bool(proposal) and not stale
+    interpretation = service.get('analysis_instruction_interpretation') or proposal.get('instruction_interpretation') or {}
+    legacy_blocked = bool(proposal.get('api_plan_id') and job.get('kind') == 'openai' and job.get('completed') == 0 and (interpretation.get('ambiguities') or interpretation.get('unsupported')))
+    manual_override = bool(proposal.get('shortlist_accepted') and proposal.get('accepted_after_block') and effective_shortlist(service))
+    blocked = (job.get('status') == 'blocked' or legacy_blocked) and not manual_override
+    blocked_reasons = (interpretation.get('ambiguities', []) + interpretation.get('unsupported', [])) if blocked else []
+    ready = bool(proposal) and not stale and not blocked
     accepted = ready and ('shortlist' not in proposal or bool(proposal.get('shortlist_accepted')))
     local_completed = ready and not proposal.get('api_plan_id')
     confirmed = service.get('confirmed_batch_id')
@@ -26,7 +31,7 @@ def workflow_summary(service, receipt_revision=None):
         phase = 'lightroom'
     elif outcome is not None:
         phase = 'outcome'
-    elif stale:
+    elif stale or blocked:
         phase = 'configure'
     elif accepted:
         phase = 'lightroom'
@@ -37,6 +42,7 @@ def workflow_summary(service, receipt_revision=None):
     else:
         phase = 'configure'
     return {'schema_version': 1, 'path': path, 'phase': phase,
+            'blocked': blocked, 'blocked_reasons': blocked_reasons,
             'local_completed': local_completed, 'proposal_ready': ready,
             'proposal_accepted': accepted, 'requires_analysis': stale,
             'confirmed_batch_id': confirmed, 'active_batch_id': active,

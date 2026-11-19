@@ -45,3 +45,9 @@ esistenti, ma viene distinto esplicitamente nella navigazione.
 interrotto: piano, ID esatti del campione, compatibilità, motivo, avanzamento e
 obiettivo finale. Una nuova stima non nasconde il tentativo interrotto. Questo
 riepilogo non recupera consensi e non avvia chiamate API.
+
+La proposta espone `effective_shortlist`: lista automatica con inclusioni ed
+esclusioni manuali sovrapposte. Il riepilogo workflow include `blocked` e
+`blocked_reasons`; un blocco di interpretazione non equivale a un’analisi foto
+completata. Una selezione manuale confermata può superare il blocco operativo
+senza cancellarne la diagnostica.

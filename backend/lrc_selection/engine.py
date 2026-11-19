@@ -18,6 +18,18 @@ def effective_selected(service):
             selected.discard(pid)
     return [p['id'] for p in service['photos'] if p['id'] in selected]
 
+def effective_shortlist(service):
+    """Review proposal with explicit manual choices taking precedence."""
+    proposal = service.get('proposal') or {}
+    selected = set(proposal.get('shortlist', []))
+    for pid, decision in service.get('decisions', {}).items():
+        if decision['state'] in SELECTED:
+            selected.add(pid)
+        else:
+            selected.discard(pid)
+    return [photo['id'] for photo in service['photos'] if photo['id'] in selected]
+
+
 def analyze(service):
     buckets = defaultdict(list)
     for photo in service['photos']:

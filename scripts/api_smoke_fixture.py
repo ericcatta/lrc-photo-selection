@@ -61,7 +61,22 @@ def build_fixture(root):
         return {'mock_calls': len(calls), 'original_text_preserved': all(c['original_text_preserved'] for c in calls),
                 'real_network_calls': 0}
 
-    # The app's static catch-all is already mounted: keep this test-only route before it.
+    # The app's static catch-all is already mounted: keep test-only routes before it.
+    app.router.routes.insert(0, app.router.routes.pop())
+
+    @app.post('/api/synthetic-empty-proposal')
+    def empty_proposal():
+        with store.transaction() as db:
+            service = store.get('synthetic-ui', db)
+            service['decisions'] = {}
+            service['proposal'] = analyze(service)
+            service['proposal'].update(shortlist=[], review_ids=[], shortlist_accepted=False)
+            service['job'] = None
+            service.pop('confirmed_batch_id', None)
+            service['revision'] += 1
+            store.put(db, service)
+        return {'ok': True}
+
     app.router.routes.insert(0, app.router.routes.pop())
     return app
 
