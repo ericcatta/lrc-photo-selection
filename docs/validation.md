@@ -126,3 +126,14 @@ sono classificati con messaggi fissi, senza esporre risposte provider o segreti.
 Nessuna nuova analisi cloud eseguita per questa verifica; la causa esatta del
 precedente tentativo non è recuperabile dal vecchio messaggio generico. Riserve
 precedenti conservate, senza inferire un addebito né avviare retry automatici.
+
+### 2026-11-19 — Risposta fotografica API non utilizzabile
+Nel tentativo reale sono rimaste salvate 15 valutazioni su 18. Il vecchio registro
+non permette di distinguere rifiuto, risposta incompleta e violazione dello schema.
+Ora questi esiti, quando il consumo è verificabile, conservano la foto come incerta
+e consentono di proseguire con le altre richieste già confermate, senza retry.
+Gli incerti restano nella proposta finale, salvo decisioni manuali di esclusione;
+non attestano copertura delle categorie. Errori di rete, consumo non verificabile,
+interpretazione o confronto globale continuano a sospendere il flusso.
+Diagnostica sintetica salvata nelle ricevute, senza risposte grezze del provider.
+Nessuna nuova chiamata cloud eseguita durante la correzione.

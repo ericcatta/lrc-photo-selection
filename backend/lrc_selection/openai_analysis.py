@@ -247,6 +247,7 @@ def _validated_response(response, pricing=PRICING, schema=APIAssessment):
     refusal = any(item.get('type') == 'refusal' for output in response.get('output', [])
                   for item in output.get('content', []) if isinstance(item, dict))
     if response.get('status') != 'completed' or refusal:
+        receipt['diagnostic'] = 'refusal' if refusal else 'incomplete'
         return None, receipt
     texts = [item.get('text', '') for output in response.get('output', [])
              if output.get('type') == 'message' for item in output.get('content', [])
@@ -255,6 +256,7 @@ def _validated_response(response, pricing=PRICING, schema=APIAssessment):
         assessment = schema.model_validate(json.loads(''.join(texts))).model_dump()
     except (ValueError, TypeError):
         assessment = None
+        receipt['diagnostic'] = 'schema'
     return assessment, receipt
 
 
@@ -431,7 +433,7 @@ class OpenAIAnalysis:
                 receipts.append({'request_id': call['id'], 'plan_id': call['plan_id'],
                                  'response_id': record.get('response_id'), 'model': record.get('model'),
                                  'usage': usage, 'cost_usd': call['cost'] / 1e6,
-                                 'reserved_usd': call['reserved'] / 1e6})
+                                 'reserved_usd': call['reserved'] / 1e6, 'diagnostic': record.get('diagnostic')})
             return self.totals(db, sid) | {
                 'job': {k: job.get(k) for k in ('plan_id', 'status', 'completed', 'total', 'error', 'final_target')} if job else None,
                 'usage': {'input_tokens': input_tokens, 'output_tokens': output_tokens},
@@ -506,7 +508,7 @@ class OpenAIAnalysis:
             sheets.append(data.getvalue())
         return sheets
 
-    def invoke(self, sid, plan, payload, key, cache_key, schema, *, reserve=None, validate=None):
+    def invoke(self, sid, plan, payload, key, cache_key, schema, *, reserve=None, validate=None, uncertain_categories=None):
         service = self.store.get(sid)
         if service['revision'] != plan['run_revision'] or service['settings']['mode'] != 'hybrid' or _hash(service['settings']) != plan['settings_hash'] or self.configured_model() != plan['model']:
             raise RuntimeError('Servizio cambiato: invio interrotto')
@@ -531,14 +533,21 @@ class OpenAIAnalysis:
         response = self.transport(payload, key)
         result, receipt = _validated_response(response, plan['pricing'], schema)
         with self.db() as db:
-            db.execute('UPDATE calls SET cost=?,reserved=0,body=? WHERE id=?', (receipt['cost_micro'], json.dumps(receipt), call_id))
             if result is not None and validate is not None:
                 try:
                     validate(result)
                 except (ValueError, TypeError):
                     result = None
+                    receipt['diagnostic'] = 'category_mismatch' if schema is APIAssessment else 'ranking_mismatch'
+            db.execute('UPDATE calls SET cost=?,reserved=0,body=? WHERE id=?', (receipt['cost_micro'], json.dumps(receipt), call_id))
             if result is not None:
                 db.execute('INSERT OR REPLACE INTO cache VALUES (?,?)', (cache_key, json.dumps(result, ensure_ascii=False)))
+        if result is None and uncertain_categories is not None:
+            # A completed billable response with unusable photo output is an
+            # unknown, not an exclusion. Do not retry or cache invented evidence.
+            result = {'match': 'uncertain', 'reason': 'Da rivedere: risposta OpenAI incompleta, rifiutata o non verificabile. Immagine conservata per prudenza.',
+                      'scene': '', 'quality_issues': [], 'preference_score': 0.5,
+                      'category_matches': {category: 'uncertain' for category in uncertain_categories}}
         if result is None:
             raise WorkflowError('Risposta OpenAI incompleta, rifiutata o non conforme allo schema richiesto. Consumo registrato quando disponibile; risultati conservati. Prepara una nuova stima e conferma per riprendere.')
         return result
@@ -585,7 +594,7 @@ class OpenAIAnalysis:
                         data = self.checked_preview(sid, imported)
                         if hashlib.sha256(data).hexdigest() != photo['preview_sha256']:
                             raise RuntimeError('Anteprima cambiata')
-                        assessment = self.invoke(sid, plan, _request(plan, data), key, photo['cache_key'], APIAssessment, validate=validate_categories)
+                        assessment = self.invoke(sid, plan, _request(plan, data), key, photo['cache_key'], APIAssessment, validate=validate_categories, uncertain_categories=category_ids)
                     if set(assessment['category_matches']) != category_ids:
                         raise RuntimeError('Categorie della risposta non valide')
                     if category_ids and assessment['match'] == 'yes' and not any(v == 'yes' for v in assessment['category_matches'].values()):
@@ -657,9 +666,13 @@ class OpenAIAnalysis:
             ordered = [plan['photos'][index]['id'] for index in plan['collection']['ranking'] if plan['photos'][index]['id'] in matched]
         categories = plan.get('interpretation', {}).get('requested_categories', [])
         selection = select_with_category_coverage(ordered, forced, plan['results'], categories, target)
-        chosen = selection['shortlist']
+        chosen = list(selection['shortlist'])
+        review_ids = [p for p in eligible if plan['results'].get(p, {}).get('match') == 'uncertain']
+        chosen.extend(p for p in review_ids if p not in chosen)
         phase = ('Confronto globale dei provini confermati e delle valutazioni completato; nessuna garanzia di copertura o identità.' if plan.get('collection') else 'Richiesta da chiarire: analisi delle immagini e confronto globale non eseguiti.')
         warnings = ['Proposta API da rivedere. ' + phase] + selection['warnings'] + plan.get('collection', {}).get('warnings', [])
+        if review_ids:
+            warnings.append(f'{len(review_ids)} immagini incerte o non valutabili conservate nella proposta come da rivedere; non sono corrispondenze confermate.')
         interpretation = plan.get('interpretation', {})
         warnings.extend('Richiesta da chiarire: ' + text for text in interpretation.get('ambiguities', []))
         warnings.extend('Criterio non verificabile: ' + text for text in interpretation.get('unsupported', []))
@@ -669,9 +682,9 @@ class OpenAIAnalysis:
             warnings.append('Corrispondenze non verificabili: risultati incerti da rivedere, nessun riempimento forzato.')
         if len(chosen) > target:
             warnings.append('Copertura o decisioni manuali richiedono più immagini della quantità indicata: tutte preservate.')
-        if len(chosen) < target:
+        if len(selection['shortlist']) < target:
             warnings.append('Foto corrispondenti insufficienti per raggiungere la quantità richiesta.')
-        proposal.update(shortlist=chosen, shortlist_reasons={p: plan['results'].get(p, {}).get('reason', 'Decisione manuale preservata.') for p in chosen},
+        proposal.update(shortlist=chosen, review_ids=review_ids, shortlist_reasons={p: plan['results'].get(p, {}).get('reason', 'Decisione manuale preservata.') for p in chosen},
                         query_scores={}, warnings=warnings, engine=SCHEMA_VERSION, coverage=selection['coverage'],
                         semantic={'query': plan['instructions'], 'model': plan['model'], 'method': SCHEMA_VERSION},
                         api_plan_id=plan['plan_id'], api_target=target)

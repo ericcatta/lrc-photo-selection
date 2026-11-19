@@ -17,15 +17,15 @@ class Secrets:
         return 'synthetic-secret-never-returned'
 
 
-def setup(client, *, duplicate=False):
+def setup(client, *, duplicate=False, count=3):
     runner = client.app.state.openai_analysis
     config = client.app.state.openai_config
     config.path.write_text(json.dumps({'model': api_module.MODEL}))
     config.keychain = Secrets()
-    m = manifest(count=3)
+    m = manifest(count=count)
     m['photos'][2]['baseline_rating'] = 4
     client.post('/api/imports', json=m).raise_for_status()
-    for index, color in enumerate(['red', 'red' if duplicate else 'blue', 'green']):
+    for index, color in enumerate(['red', 'red' if duplicate else 'blue', 'green'] + [f'#{index * 123457 % 16777216:06x}' for index in range(3, count)]):
         client.put(f'/api/services/test-service/photos/u{index}:1/preview', content=jpeg(color)).raise_for_status()
     client.post('/api/services/test-service/complete').raise_for_status()
     store = client.app.state.store
@@ -279,7 +279,8 @@ def test_uncertain_results_do_not_claim_absence(client):
     confirm(client, estimate(client, service).json()).raise_for_status()
     wait(client)
     proposal = client.get('/api/services/test-service').json()['proposal']
-    assert proposal['shortlist'] == []
+    assert proposal['shortlist'] == ['u0:1', 'u1:1']
+    assert proposal['review_ids'] == ['u0:1', 'u1:1']
     assert any('non verificabili' in warning for warning in proposal['warnings'])
     assert not any('Nessuna corrispondenza rilevata' in warning for warning in proposal['warnings'])
 
@@ -540,3 +541,45 @@ def test_transport_uses_verified_application_ca_bundle(monkeypatch):
     monkeypatch.setattr(api_module.ssl, 'create_default_context', create_context)
     monkeypatch.setattr(api_module, 'build_opener', opener)
     assert api_module.responses_transport({'model': 'synthetic'}, 'synthetic-key') == {'synthetic': True}
+
+
+@pytest.mark.parametrize('failure', ['incomplete', 'refusal', 'schema', 'category_mismatch'])
+def test_invalid_sixteenth_photo_is_retained_and_remaining_authorized_calls_continue(client, failure):
+    runner, service = setup(client, count=18)
+    photo_calls = []
+    def transport(payload, key):
+        response = reply(payload)
+        if payload['text']['format']['name'] == 'photo_assessment':
+            photo_calls.append(payload)
+            if len(photo_calls) == 16:
+                if failure == 'incomplete':
+                    response['status'] = 'incomplete'
+                elif failure == 'refusal':
+                    response['output'][0]['content'].append({'type': 'refusal', 'refusal': 'private refusal'})
+                elif failure == 'schema':
+                    response['output'][0]['content'][0]['text'] = 'private malformed output'
+                else:
+                    assessment = json.loads(response['output'][0]['content'][0]['text'])
+                    assessment['category_matches'] = {'unexpected': 'yes'}
+                    response['output'][0]['content'][0]['text'] = json.dumps(assessment)
+        return response
+    runner.transport = transport
+    ids = [f'u{index}:1' for index in range(18)]
+    plan = estimate(client, service, ids=ids).json()
+    confirm(client, plan).raise_for_status()
+    status = wait(client)
+    assert status['job']['status'] == 'completed'
+    assert status['job']['completed'] == 18 and len(photo_calls) == 18
+    assert status['reserved_usd'] == 0 and status['spent_usd'] > 0
+    receipt = next(r for r in status['receipts'] if r.get('diagnostic'))
+    assert receipt['diagnostic'] == failure
+    assert 'private' not in json.dumps(status)
+    updated = client.get('/api/services/test-service').json()
+    assert updated['proposal']['review_ids'] == ['u15:1']
+    assert 'u15:1' in updated['proposal']['shortlist']
+    assert updated['interpretations']['records']['u15:1']['assessment']['match'] == 'uncertain'
+    with runner.db() as db:
+        saved = runner.plan(db, service['id'], plan['plan_id'])
+        assert 15 not in saved['collection']['ranking']
+        assert all(db.execute('SELECT body FROM cache WHERE key=?', (photo['cache_key'],)).fetchone()
+                   for photo in saved['photos'][:15])
