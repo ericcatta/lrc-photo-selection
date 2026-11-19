@@ -22,3 +22,24 @@ Solo anteprime strettamente necessarie; persone riconosciute localmente. Chiave 
 
 ## Accettazione
 Prima preservare situazioni significative, composizioni e immagini uniche, poi ridurre doppioni, tempo e costo. Il primo traguardo è il flusso manuale completo, seguito da motore locale verificato su campione reale concordato e da prova API con budget autorizzato. Nessuna fotografia dell'utente accessibile prima della scelta del campione.
+
+## Situazioni distinte e varianti — aggiornamento 19 novembre 2026
+
+La selezione automatica, locale e OpenAI, conserva prima una rappresentante di
+ogni gruppo di situazioni distinte pertinente. La qualità sceglie la migliore
+rappresentante all’interno del gruppo; una variante quasi uguale di qualità
+maggiore non deve sostituire una situazione diversa. Questa regola è predefinita,
+anche senza la parola «varietà» nelle istruzioni.
+
+La quantità resta un obiettivo: 23 situazioni da rappresentare possono produrre
+23 candidate anche quando il target è 20. Se le situazioni sono soltanto 10 e
+il target è 20, si aggiungono seconde scelte distribuite tra i gruppi, poi terze
+scelte, fino al target o all’esaurimento delle alternative idonee. I gruppi senza
+altre varianti vengono saltati. Le inclusioni manuali sono preservate e contano
+nell’occupazione dei gruppi; esclusioni e alternative manuali non vengono riprese.
+Le immagini incerte restano da rivedere e non diventano prove di copertura.
+
+La somiglianza è evidenza provvisoria, non identità certificata. Non basta la
+stessa categoria («uccelli») per considerare due immagini intercambiabili.
+Il confronto OpenAI riguarda soltanto il campione confermato, non tutte le foto
+importate. Non si ampliano campioni né si inviano nuove richieste automaticamente.

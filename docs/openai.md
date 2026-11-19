@@ -66,3 +66,21 @@ Il motore locale valuta tutte le anteprime e combina le evidenze dell’intero s
 Il riepilogo mostra «Costo non disponibile» e richiede una conferma esplicita che autorizza l’invio senza controllo del budget monetario. Il budget salvato viene preservato. Si registrano i token disponibili e le richieste senza prezzo; il consumo monetario noto è indicato come parziale, e il residuo complessivo non è verificabile. La fatturazione OpenAI resta la fonte del costo effettivo. Nessuna verifica del catalogo modelli invia immagini, effettua inferenza o cambia automaticamente il modello selezionato.
 
 Fonti GPT-6.2: https://developers.openai.com/api/docs/models/gpt-6.2-sol e https://developers.openai.com/api/docs/models/gpt-6.2-astra.
+
+## Situazioni prima delle varianti
+
+Il confronto globale restituisce anche gruppi di alternative quasi identiche:
+la partizione deve contenere ogni foto corrispondente esattamente una volta.
+Una categoria generica o lo stesso luogo non bastano per unire due foto. Il
+backend conserva prima una rappresentante per gruppo, anche oltre il target;
+poi aggiunge varianti distribuendole tra i gruppi meno rappresentati. Le scelte
+manuali prevalgono e vengono conteggiate nella distribuzione.
+
+Questo criterio si applica anche senza chiedere esplicitamente varietà. Il
+ranking stabilisce quale variante preferire, non autorizza a sacrificare una
+situazione diversa per un duplicato più bello. Un nuovo formato del confronto
+invalida soltanto la cache globale: valutazioni individuali e interpretazione
+compatibili restano riutilizzabili. Le proposte esistenti non vengono riscritte
+al caricamento. Un confronto nuovo richiede sempre stima e conferma; la
+ricomposizione di vecchi risultati senza gruppi usa solo l’evidenza delle
+anteprime identiche e segnala il limite.

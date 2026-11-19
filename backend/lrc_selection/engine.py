@@ -50,15 +50,22 @@ def analyze(service):
         for pid in members:
             reasons[pid] = reason
     target = service['settings']['target']
-    for p in service['photos']:
-        if len(selected) >= target:
-            break
-        if p['id'] not in selected and service['decisions'].get(p['id'], {}).get('state') not in {'excluded', 'alternative'}:
-            selected.append(p['id'])
-            reasons[p['id']] = 'Recuperata tra le alternative per raggiungere la quantità richiesta.'
+    from .selection import select_with_category_coverage
+    allowed = [photo['id'] for photo in service['photos']
+               if service['decisions'].get(photo['id'], {}).get('state') not in {'excluded', 'alternative'}]
+    forced = [pid for pid in allowed if service['decisions'].get(pid, {}).get('state') in SELECTED]
+    balanced = select_with_category_coverage(allowed, forced,
+        {pid: {'match': 'yes', 'category_matches': {}} for pid in allowed}, [], target, groups=groups)
+    selected = balanced['shortlist']
+    for group in groups:
+        chosen = [pid for pid in selected if pid in group['members']]
+        for pid in chosen[1:]:
+            if pid not in forced:
+                reasons[pid] = 'Variante aggiunta distribuendo le alternative tra i gruppi per raggiungere la quantità richiesta.'
     proposal = {'selected': selected, 'groups': groups, 'reasons': reasons,
                 'warnings': ['Il motore iniziale riconosce solo anteprime identiche; scene, persone e pose non sono state riconosciute.'],
-                'engine': 'exact-preview-v1'}
+                'engine': 'exact-preview-v1', 'selection_policy': balanced['selection_policy'],
+                'selection_groups': balanced['selection_groups']}
     working = dict(service, proposal=proposal)
     proposal['selected'] = effective_selected(working)
     if len(proposal['selected']) < target:

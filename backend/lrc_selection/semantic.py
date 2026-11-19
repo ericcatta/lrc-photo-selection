@@ -1,16 +1,16 @@
-"""Offline, review-only retrieval from imported previews.
+"""Offline review proposals: distinct visual groups before balanced variants.
 
-The shortlist is not an equivalence claim or an exclusion decision. MMR uses a
-fixed experimental relevance weight (0.85), exposed in the result, not a calibrated
-photographic quality threshold. Image similarity cannot establish people/poses.
+Similarity supplies conservative grouping evidence, never certified identities,
+poses or scene coverage. Instructions and manual decisions remain authoritative.
 """
 import hashlib
 import numpy as np
 
 from .engine import SELECTED
 from .features import FeatureCache, comparison_suggestions
+from .selection import select_with_category_coverage, visual_signature, group_visual_neighbors, SELECTION_POLICY, GROUPING_POLICY
 
-RELEVANCE_WEIGHT = .85
+RELEVANCE_WEIGHT = 1.
 
 
 def _normalized(values):
@@ -35,12 +35,13 @@ def build_semantic_proposal(store, snapshot, encoder, progress=None):
             records[pid] = {'error': 'Anteprima mancante'}
         else:
             path = store.preview_path(snapshot['id'], pid)
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            raw = path.read_bytes()
+            digest = hashlib.sha256(raw).hexdigest()
             if digest != photo['preview_sha256']:
                 raise ValueError('Anteprima cambiata: reimportare prima di analizzare')
             embedding = cache.get_or_compute(digest, 'embedding', encoder.identity, lambda: encoder.encode(path))
             vectors[pid] = _normalized(embedding)
-            records[pid] = {'preview_sha256': digest, 'embedding': vectors[pid].tolist()}
+            records[pid] = {'preview_sha256': digest, 'embedding': vectors[pid].tolist(), 'visual_signature': visual_signature(raw)}
         if progress:
             progress(index + 1, len(photos))
 
@@ -61,20 +62,19 @@ def build_semantic_proposal(store, snapshot, encoder, progress=None):
 
     target = snapshot['settings']['target']
     remaining = [pid for pid in eligible if pid in vectors and pid not in shortlist]
-    while remaining and len(shortlist) < target:
-        selected_vectors = [vectors[pid] for pid in shortlist if pid in vectors]
-        def priority(pid):
-            redundancy = max((float(np.dot(vectors[pid], other)) for other in selected_vectors), default=0.)
-            if query:
-                return RELEVANCE_WEIGHT * scores[pid] - (1 - RELEVANCE_WEIGHT) * redundancy
-            # Stable first image seeds the spread when no subject was specified.
-            return -redundancy if selected_vectors else 0.
-        chosen = max(remaining, key=priority)  # ties retain original import order
-        shortlist.append(chosen)
-        remaining.remove(chosen)
+    remaining.sort(key=lambda pid: -scores.get(pid, 0.))
+    shortlist.extend(remaining)
+
+    forced = [pid for pid in eligible if decisions.get(pid, {}).get('state') in SELECTED]
+    groups = group_visual_neighbors(shortlist, {pid: record.get('visual_signature') for pid, record in records.items()}, vectors)
+    balanced = select_with_category_coverage([pid for pid in shortlist if pid not in forced], forced,
+                  {pid: {'match': 'yes'} for pid in vectors}, [], target, groups)
+    shortlist = balanced['shortlist']
+    review_ids = [pid for pid in eligible if pid not in vectors]
+    shortlist.extend(pid for pid in review_ids if pid not in shortlist)
 
     warnings = ['Proposta da rivedere: somiglianza visiva e pertinenza al soggetto non dimostrano equivalenza, identità o copertura delle situazioni.']
-    if len(shortlist) > target:
+    if len(forced) > target:
         warnings.append('Le decisioni manuali richiedono più immagini della quantità indicata: tutte conservate.')
     elif len(shortlist) < target:
         warnings.append('Quantità non raggiunta: alternative/esclusioni manuali o anteprime mancanti limitano la proposta.')
@@ -82,32 +82,35 @@ def build_semantic_proposal(store, snapshot, encoder, progress=None):
         warnings.append('Anteprime mancanti: le immagini restano candidate e richiedono revisione manuale.')
     reasons = {}
     for pid in shortlist:
-        if decisions.get(pid, {}).get('state') in SELECTED:
+        if pid in review_ids:
+            reasons[pid] = 'Anteprima mancante o non valutabile: conservata da rivedere, nessuna esclusione automatica.'
+        elif decisions.get(pid, {}).get('state') in SELECTED:
             reasons[pid] = 'Inclusa per decisione manuale, preservata durante l’analisi.'
         elif query:
             reasons[pid] = f'Pertinenza visiva al soggetto «{query}» (coseno {scores[pid]:.3f}); diversità visiva considerata nella proposta.'
         else:
             reasons[pid] = 'Inclusa nella proposta per distribuire la diversità degli embedding visivi; situazione reale non identificata.'
+    for pid in vectors:
+        if pid not in shortlist and pid in eligible:
+            reasons[pid] = 'Alternativa dello stesso gruppo visivo: disponibile dopo le rappresentanti degli altri gruppi.'
+    warnings.extend(balanced['warnings'])
     warning = warnings[0]
     return {
         'interpretations': {'schema_version': 1, 'model': encoder.identity, 'records': records,
                             'comparisons': comparison_suggestions(records), 'warning': warning},
-        'shortlist': shortlist, 'shortlist_reasons': reasons, 'query_scores': scores,
+        'shortlist': shortlist, 'review_ids': review_ids, 'shortlist_reasons': reasons, 'query_scores': scores,
         'model': encoder.identity, 'query': query, 'warnings': warnings,
-        'method': {'name': 'semantic-review-v1', 'relevance_weight': RELEVANCE_WEIGHT,
+        'selection_groups': balanced['selection_groups'], 'selection_policy': SELECTION_POLICY,
+        'method': {'name': 'semantic-review-v2-groups', 'selection_policy': SELECTION_POLICY, 'grouping': GROUPING_POLICY, 'relevance_weight': RELEVANCE_WEIGHT,
                    'calibrated': False, 'changes_candidate_decisions': False},
     }
 
 
 def rerank_instruction_shortlist(result, snapshot, store, encoder):
-    """Add visual diversity among confirmed matches without changing assessments.
+    """Preserve distinct groups before balanced extras, ranked by user merit.
 
-    Experimental MMR: 0.7 * ordinal user preference/photographic merit +
-    0.3 * embedding novelty.
-    Novelty is (1 - highest cosine similarity to an already selected image) / 2.
-    The constants are exposed, not calibrated. This list does not establish
-    equivalence, person identities or scene coverage. No missing/uncertain/no
-    assessment is used to fill the requested count.
+    Conservative visual descriptors plus embeddings identify near variants;
+    uncertain photos remain independently preserved by the local review policy.
     """
     from copy import deepcopy
     updated = deepcopy(result)
@@ -130,7 +133,8 @@ def rerank_instruction_shortlist(result, snapshot, store, encoder):
         if pid not in needed or not photo.get('preview_ready'):
             continue
         path = store.preview_path(snapshot['id'], pid)
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        raw = path.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
         if digest != photo['preview_sha256']:
             raise ValueError('Anteprima cambiata: reimportare prima di analizzare')
         vector = _normalized(cache.get_or_compute(digest, 'embedding', encoder.identity,
@@ -138,31 +142,23 @@ def rerank_instruction_shortlist(result, snapshot, store, encoder):
         vectors[pid] = vector
         records = updated.setdefault('interpretations', {}).setdefault('records', {})
         records.setdefault(pid, {'preview_sha256': digest})['embedding'] = vector.tolist()
+        records[pid]['visual_signature'] = visual_signature(raw)
     if vectors and len({v.shape for v in vectors.values()}) != 1:
         raise ValueError('Dimensioni degli embedding incompatibili')
-    selected = list(forced)
-    remaining = [pid for pid in matches if pid in vectors]
-    ranking_evidence = {}
+    for pid in matches:
+        preference = assessments[pid].get('preference_score', .5)
+        if not isinstance(preference, (int, float)) or not np.isfinite(preference) or not 0 <= preference <= 1:
+            raise ValueError('Punteggio di preferenza non valido')
+    ordered = sorted((pid for pid in matches if pid in vectors),
+                     key=lambda pid: -assessments[pid].get('preference_score', .5))
+    selected = forced + ordered
+    ranking_evidence = {pid: {'preference_score': assessments[pid].get('preference_score', .5)} for pid in ordered}
     categories = result.get('instruction_interpretation', {}).get('requested_categories', [])
-    while remaining and (categories or len(selected) < snapshot['settings']['target']):
-        selected_vectors = [vectors[pid] for pid in selected if pid in vectors]
-        evaluated = {}
-        for pid in remaining:
-            preference = assessments[pid].get('preference_score', .5)
-            if not isinstance(preference, (int, float)) or not np.isfinite(preference) or not 0 <= preference <= 1:
-                raise ValueError('Punteggio di preferenza non valido')
-            similarity = max((float(np.clip(np.dot(vectors[pid], vector), -1, 1))
-                              for vector in selected_vectors), default=0.)
-            novelty = (1 - similarity) / 2
-            evaluated[pid] = {'preference_score': preference, 'novelty': novelty,
-                              'rank_score': .7 * preference + .3 * novelty}
-        chosen = max(remaining, key=lambda pid: evaluated[pid]['rank_score'])
-        selected.append(chosen)
-        remaining.remove(chosen)
-        ranking_evidence[chosen] = evaluated[chosen]
     coverage_assessments = local_confirmed_coverage_assessments(assessments) if local_policy else assessments
+    records = updated.get('interpretations', {}).get('records', {})
+    groups = group_visual_neighbors(selected, {pid: record.get('visual_signature') for pid, record in records.items()}, vectors)
     covered = select_with_category_coverage([pid for pid in selected if pid not in forced], forced,
-                                             coverage_assessments, categories, snapshot['settings']['target'])
+                                             coverage_assessments, categories, snapshot['settings']['target'], groups)
     selected = covered['shortlist']
     if local_policy:
         retained = retain_local_review_candidates(selected, snapshot, assessments)
@@ -171,10 +167,14 @@ def rerank_instruction_shortlist(result, snapshot, store, encoder):
         updated.setdefault('warnings', []).extend(w for w in retained['warnings'] if w not in updated.get('warnings', []))
     updated['shortlist'] = selected
     updated['coverage'] = covered['coverage']
+    updated['selection_groups'] = covered['selection_groups']
+    updated['selection_policy'] = SELECTION_POLICY
     updated.setdefault('warnings', []).extend(w for w in covered['warnings'] if w not in updated.get('warnings', []))
     reasons = {}
-    for pid in selected:
-        if pid in local_review:
+    for pid in dict.fromkeys(selected + matches):
+        if pid not in selected:
+            reasons[pid] = assessments[pid]['reason'] + ' Alternativa dello stesso gruppo: priorità alle rappresentanti degli altri gruppi prima delle varianti aggiuntive.'
+        elif pid in local_review:
             reasons[pid] = result.get('shortlist_reasons', {}).get(pid, 'Da rivedere, conservata per prudenza: ' + assessments.get(pid, {}).get('reason', 'Valutazione non disponibile.'))
         elif pid in forced:
             reasons[pid] = 'Decisione manuale preservata.'
@@ -184,9 +184,10 @@ def rerank_instruction_shortlist(result, snapshot, store, encoder):
     updated['diversity_model'] = encoder.identity
     updated['ranking_evidence'] = ranking_evidence
     updated.setdefault('method', {}).update(
-        ranking='instruction-preference-and-visual-diversity-v1',
-        preference_weight=.7, novelty_weight=.3, calibrated=False)
-    warning = 'Diversità visiva stimata dagli embedding con pesi sperimentali 70% preferenze e merito fotografico e 30% novità; non certifica scene, persone o copertura.'
+        ranking=SELECTION_POLICY, grouping=GROUPING_POLICY,
+        preference_weight=1., novelty_weight=0., calibrated=False)
+    updated['warnings'] = [w for w in updated.get('warnings', []) if not w.startswith('Diversità visiva stimata dagli embedding con pesi sperimentali')]
+    warning = 'Prima una rappresentante per ogni gruppo visivo distinto, poi varianti aggiuntive a turni bilanciati; preferenze e merito fotografico ordinano le immagini nello stesso gruppo. Gruppi da verificare, nessuna identità o copertura certificata.'
     if warning not in updated.setdefault('warnings', []):
         updated['warnings'].append(warning)
     if any(pid not in vectors for pid in matches):
@@ -194,62 +195,6 @@ def rerank_instruction_shortlist(result, snapshot, store, encoder):
     return updated
 
 
-def select_with_category_coverage(ordered_ids, forced_ids, assessments, categories, target):
-    """Represent every requested category with eligible positive model evidence.
-
-    Input order is the caller's preference/diversity ranking. Never use uncertain
-    or negative evidence as a substitute. The requested quantity is a target:
-    category coverage and manual positives may exceed it, with an explicit warning.
-    This preserves only categories the model reported, not all real situations.
-    """
-    selected = list(dict.fromkeys(forced_ids))
-    ordered = list(dict.fromkeys(pid for pid in ordered_ids if pid not in selected))
-    category_ids = [category['id'] for category in categories]
-    def covers(pid, category_id):
-        return assessments.get(pid, {}).get('category_matches', {}).get(category_id) == 'yes'
-    uncovered = {cid for cid in category_ids if not any(covers(pid, cid) for pid in selected)}
-    while uncovered:
-        candidates = [pid for pid in ordered if assessments.get(pid, {}).get('match') == 'yes'
-                      and any(covers(pid, cid) for cid in uncovered)]
-        if not candidates:
-            break
-        chosen = max(candidates, key=lambda pid: sum(covers(pid, cid) for cid in uncovered))
-        selected.append(chosen)
-        ordered.remove(chosen)
-        uncovered = {cid for cid in uncovered if not covers(chosen, cid)}
-    for pid in ordered:
-        if len(selected) >= target:
-            break
-        if assessments.get(pid, {}).get('match') == 'yes':
-            selected.append(pid)
-    coverage, warnings = [], []
-    eligible = set(ordered_ids) | set(forced_ids)
-    for category in categories:
-        cid, description = category['id'], category['description']
-        representatives = [pid for pid in selected if covers(pid, cid)]
-        recognized = [pid for pid, a in assessments.items() if a.get('match') == 'yes' and covers(pid, cid)]
-        available = [pid for pid in recognized if pid in eligible]
-        uncertain = [pid for pid, a in assessments.items()
-                     if a.get('category_matches', {}).get(cid, 'uncertain') == 'uncertain']
-        if representatives:
-            status = 'represented'
-        elif recognized and not available:
-            status = 'manual-excluded'
-            warnings.append(f'Categoria richiesta «{description}» non rappresentata: le corrispondenze sono escluse dalle decisioni manuali.')
-        elif not assessments:
-            status = 'not-assessed'
-            warnings.append(f'Categoria richiesta «{description}» non valutata: analisi non eseguita.')
-        elif uncertain:
-            status = 'uncertain'
-            warnings.append(f'Categoria richiesta «{description}» non confermata: presenti valutazioni incerte da rivedere, nessuna sostituzione automatica.')
-        else:
-            status = 'not-detected'
-            warnings.append(f'Categoria richiesta «{description}»: nessuna corrispondenza idonea rilevata; non è prova di assenza nel servizio.')
-        coverage.append({'id': cid, 'description': description, 'selected_ids': representatives,
-                         'eligible_count': len(available), 'uncertain_count': len(uncertain), 'status': status})
-    if len(selected) > target:
-        warnings.append('Quantità indicativa superata per preservare categorie richieste e decisioni manuali: rivedere il compromesso prima di confermare.')
-    return {'shortlist': selected, 'coverage': coverage, 'warnings': warnings}
 
 
 LOCAL_UNCERTAINTY_POLICY = 'retain-uncertain-v1'

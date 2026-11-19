@@ -40,9 +40,9 @@ def test_subject_query_retrieval_cache_and_no_mutation(tmp_path):
     original = copy.deepcopy(snapshot)
     progress = []
     result = build_semantic_proposal(store, snapshot, encoder, lambda n, total: progress.append((n, total)))
-    assert result['shortlist'] == ['0', '1']
+    assert result['shortlist'] == ['0', '1', '2', '3']
     assert result['query_scores']['0'] > result['query_scores']['2']
-    assert len(result['shortlist_reasons']) == 2
+    assert len(result['shortlist_reasons']) == 4
     assert snapshot == original
     assert progress == [(1, 4), (2, 4), (3, 4), (4, 4)]
     snapshot['settings']['subject_query'] = 'persone'
@@ -57,7 +57,7 @@ def test_subject_query_retrieval_cache_and_no_mutation(tmp_path):
 def test_diversity_and_manual_precedence(tmp_path):
     store, snapshot, encoder = fixture(tmp_path)
     snapshot['settings']['subject_query'] = ''
-    assert build_semantic_proposal(store, snapshot, encoder)['shortlist'] == ['0', '2']
+    assert build_semantic_proposal(store, snapshot, encoder)['shortlist'] == ['0', '1', '2', '3']
     snapshot['decisions'] = {'0': {'state': 'excluded', 'locked': True},
                              '1': {'state': 'alternative'},
                              '3': {'state': 'preferred', 'locked': True}}
@@ -93,7 +93,7 @@ def test_interruption_reuses_successful_image_cache(tmp_path):
         build_semantic_proposal(store, snapshot, encoder, interrupt)
     result = build_semantic_proposal(store, snapshot, encoder)
     assert len(encoder.image_calls) == 4
-    assert len(result['shortlist']) == 2
+    assert len(result['shortlist']) == 4
 
 
 def test_invalid_vector_fails_without_pretending_selection(tmp_path):
@@ -110,16 +110,16 @@ def instruction_result(matches=('0','1','2','3')):
             'interpretations':{'records':{}}, 'blocked':False}
 
 
-def test_instruction_diversity_separates_near_duplicate_birds_and_keeps_inputs(tmp_path):
+def test_instruction_grouping_without_image_evidence_keeps_distinct_inputs(tmp_path):
     from lrc_selection.semantic import rerank_instruction_shortlist
     store,snapshot,encoder=fixture(tmp_path)
     result=instruction_result()
     original=copy.deepcopy(result)
     reranked=rerank_instruction_shortlist(result,snapshot,store,encoder)
-    assert reranked['shortlist']==['0','2']
+    assert reranked['shortlist']==['0','1','2','3']
     assert result==original
     assert all(a['match']=='yes' for a in reranked['assessments'].values())
-    assert reranked['method']['novelty_weight']==.3
+    assert reranked['method']['novelty_weight']==0.
     assert 'embedding' in reranked['interpretations']['records']['0']
     rerank_instruction_shortlist(result,snapshot,store,encoder)
     assert len(encoder.image_calls)==4
@@ -131,7 +131,7 @@ def test_instruction_diversity_preserves_forced_decisions_and_never_fills(tmp_pa
     snapshot['decisions']={'3':{'state':'preferred','locked':True},'0':{'state':'excluded','locked':True}}
     result=instruction_result(matches=('0','1','2'))
     reranked=rerank_instruction_shortlist(result,snapshot,store,encoder)
-    assert reranked['shortlist']==['3','1']
+    assert reranked['shortlist']==['3','1','2']
     snapshot['settings']['target']=4
     result=instruction_result(matches=())
     assert rerank_instruction_shortlist(result,snapshot,store,encoder)['shortlist']==['3']
@@ -147,7 +147,7 @@ def test_instruction_preference_can_outweigh_small_diversity_difference(tmp_path
     result['assessments']['1']['preference_score']=.99
     result['assessments']['2']['preference_score']=.1
     result['assessments']['3']['preference_score']=.1
-    assert rerank_instruction_shortlist(result,snapshot,store,encoder)['shortlist']==['0','1']
+    assert rerank_instruction_shortlist(result,snapshot,store,encoder)['shortlist']==['0','1','2','3']
     result['blocked']=True
     encoder.encode=lambda path: pytest.fail('blocked instruction must not encode')
     assert rerank_instruction_shortlist(result,snapshot,store,encoder)==result
@@ -164,7 +164,7 @@ def test_category_coverage_survives_embedding_rerank_and_prefers_requested_peopl
                                         'portraits':'yes' if pid=='2' else 'no'}
         assessment['preference_score']=1. if pid in ('0','1') else .1
     reranked=rerank_instruction_shortlist(result,snapshot,store,encoder)
-    assert reranked['shortlist']==['0','2']
+    assert reranked['shortlist']==['0','2','1','3']
     assert all(category['status']=='represented' for category in reranked['coverage'])
     snapshot['decisions']={'2':{'state':'excluded','locked':True}}
     reranked=rerank_instruction_shortlist(result,snapshot,store,encoder)
@@ -199,7 +199,7 @@ def test_technical_annotations_cannot_replace_last_requested_portrait(tmp_path):
                                         'portraits':'yes' if pid=='2' else 'no'}
         assessment['quality_issues']=['Leggero mosso'] if pid=='2' else []
     first=rerank_instruction_shortlist(result,snapshot,store,encoder)
-    assert first['shortlist']==['0','2']
+    assert first['shortlist']==['0','2','1']
     result['assessments']['2']['quality_issues']=['Forte mosso', 'Rumore', 'Messa a fuoco incerta']
     second=rerank_instruction_shortlist(result,snapshot,store,encoder)
     assert second['shortlist']==first['shortlist']
@@ -221,13 +221,13 @@ def test_local_uncertainty_retention_survives_siglip_rerank_without_fabricating_
     result['shortlist']=['0','2','3']
     result['shortlist_reasons']={'2':'Da rivedere: synthetic uncertainty','3':'Da rivedere: synthetic error'}
     ranked=rerank_instruction_shortlist(result,snapshot,store,encoder)
-    assert ranked['shortlist']==['0','2','3'] and ranked['review_ids']==['2','3']
-    assert ranked['coverage'][0]['selected_ids']==['0']
+    assert ranked['shortlist']==['0','1','2','3'] and ranked['review_ids']==['2','3']
+    assert ranked['coverage'][0]['selected_ids']==['0','1']
     assert ranked['shortlist_reasons']['2']=='Da rivedere: synthetic uncertainty'
     assert len(encoder.image_calls)==2  # review-only images never treated as ranking evidence
     snapshot['decisions']={'2':{'state':'excluded','locked':True},'3':{'state':'alternative','locked':True}}
     ranked=rerank_instruction_shortlist(result,snapshot,store,encoder)
-    assert ranked['shortlist']==['0'] and ranked['review_ids']==[]
+    assert ranked['shortlist']==['0','1'] and ranked['review_ids']==[]
 
 
 def test_shared_api_category_selector_keeps_existing_unknown_behavior():

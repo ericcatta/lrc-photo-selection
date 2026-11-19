@@ -50,7 +50,8 @@ def reply(payload=None, *, match='yes', tokens=True):
         elif name == 'collection_ranking':
             context = payload['input'][0]['content'][0]['text']
             records = json.loads(context.split('Valutazioni di TUTTE le anteprime, indici dei provini: ')[1])
-            body = {'ranking': [r['index'] for r in records if r['assessment']['match'] == 'yes'], 'warnings': []}
+            matched = [r['index'] for r in records if r['assessment']['match'] == 'yes']
+            body = {'ranking': matched, 'groups': [{'members': matched, 'reason': 'Situazione sintetica ripetuta'}] if matched else [], 'warnings': []}
             result['output'][0]['content'][0]['text'] = json.dumps(body)
     if tokens:
         result['usage'] = {'input_tokens': 200, 'output_tokens': 50, 'input_tokens_details': {'cached_tokens': 0}}
@@ -333,7 +334,7 @@ def test_global_duplicate_ranking_pauses_without_replacing_proposal(client):
     def invalid_global(payload, key):
         result = reply(payload)
         if payload['text']['format']['name'] == 'collection_ranking':
-            result['output'][0]['content'][0]['text'] = json.dumps({'ranking': [0, 0], 'warnings': []})
+            result['output'][0]['content'][0]['text'] = json.dumps({'ranking': [0, 0], 'groups': [{'members': [0, 0], 'reason': 'Non valido'}], 'warnings': []})
         return result
     runner.transport = invalid_global
     confirm(client, estimate(client, service).json()).raise_for_status()
@@ -367,7 +368,7 @@ def test_global_comparison_ranking_and_categories_consider_whole_set(client):
             assert schema['additionalProperties'] is False and set(schema['required']) == {'birds', 'portraits'}
         else:
             # Global comparison puts a lower individual-scoring portrait first.
-            body = {'ranking': [1, 0], 'warnings': []}
+            body = {'ranking': [1, 0], 'groups': [{'members': [1], 'reason': 'Ritratto'}, {'members': [0], 'reason': 'Uccello'}], 'warnings': []}
             assert len(payload['input'][1]['content']) == 2  # original text + one sheet, no hidden photos
         result['output'][0]['content'][0]['text'] = json.dumps(body)
         assert payload['input'][1]['content'][0]['text'] == service['settings']['instructions']
@@ -710,3 +711,103 @@ def test_unpriced_network_failure_remains_unknown_in_ledger(client):
     assert status['job']['status'] == 'paused'
     assert status['unknown_cost_calls'] == 1 and not status['pricing_complete']
     assert status['receipts'][0]['cost_usd'] is None
+
+
+def grouped_plan(service, groups, *, ranking=None):
+    ids = [photo['id'] for photo in service['photos']]
+    return {
+        'plan_id': 'synthetic-grouped-plan', 'model': api_module.MODEL,
+        'instructions': service['settings']['instructions'], 'criteria': [], 'subject_query': '',
+        'collection_version': api_module.COLLECTION_VERSION,
+        'photos': [{'id': photo['id'], 'preview_sha256': photo['preview_sha256']} for photo in service['photos']],
+        'results': {pid: {'match': 'yes', 'reason': 'Foto sintetica pertinente', 'scene': 'uccelli',
+                         'quality_issues': [], 'preference_score': 1 - index / (len(ids) + 1), 'category_matches': {}}
+                    for index, pid in enumerate(ids)},
+        'interpretation': {'requested_categories': [], 'ambiguities': [], 'unsupported': []},
+        'collection': {'ranking': ranking or list(range(len(ids))),
+                       'groups': [{'members': members, 'reason': 'Stessa situazione sintetica, varianti'} for members in groups],
+                       'warnings': []},
+    }
+
+
+def test_grouped_api_selection_uses_best_per_situation_then_balanced_rounds(client):
+    runner, service = setup(client, count=30)
+    groups = [list(range(index * 3, index * 3 + 3)) for index in range(10)]
+    plan = grouped_plan(service, groups)
+    runner.apply_result(service, plan, 20)
+    chosen = service['proposal']['shortlist']
+    assert len(chosen) == 20
+    assert set(chosen) == {f'u{index}:1' for group in groups for index in group[:2]}
+    assert service['proposal']['grouping_source'] == 'openai-collection'
+    assert len(service['proposal']['selection_groups']) == 10
+    reasons = service['proposal']['shortlist_reasons']
+    assert 'Rappresentante conservata' in reasons['u0:1']
+    assert 'turno 2' in reasons['u1:1']
+    assert 'Alternativa della stessa situazione' in reasons['u2:1']
+
+
+def test_every_distinct_situation_survives_even_above_requested_api_quantity(client):
+    runner, service = setup(client, count=23)
+    plan = grouped_plan(service, [[index] for index in range(23)])
+    runner.apply_result(service, plan, 20)
+    assert len(service['proposal']['shortlist']) == 23
+    assert any('più immagini' in message for message in service['proposal']['warnings'])
+
+
+def test_api_group_rounds_preserve_manual_choices_exclusions_and_uncertainty(client):
+    runner, service = setup(client, count=7)
+    service['decisions'] = {'u1:1': {'state': 'preferred'}, 'u2:1': {'state': 'excluded'}}
+    plan = grouped_plan(service, [[0, 1, 2], [3, 4], [5]])
+    plan['results']['u6:1']['match'] = 'uncertain'
+    plan['collection']['ranking'] = [0, 1, 2, 3, 4, 5]
+    runner.apply_result(service, plan, 3)
+    assert set(service['proposal']['shortlist']) == {'u1:1', 'u3:1', 'u5:1', 'u6:1'}
+    assert service['proposal']['review_ids'] == ['u6:1']
+    assert service['decisions']['u2:1']['state'] == 'excluded'
+
+
+@pytest.mark.parametrize('groups', [
+    [{'members': [0], 'reason': 'Missing member'}],
+    [{'members': [0, 1], 'reason': 'Overlap'}, {'members': [1], 'reason': 'Overlap'}],
+    [{'members': [0, 1, 99], 'reason': 'Outside sample'}],
+])
+def test_malformed_global_situation_partition_pauses_without_caching(client, groups):
+    runner, service = setup(client)
+    def transport(payload, key):
+        result = reply(payload)
+        if payload['text']['format']['name'] == 'collection_ranking':
+            result['output'][0]['content'][0]['text'] = json.dumps({'ranking': [0, 1], 'groups': groups, 'warnings': []})
+        return result
+    runner.transport = transport
+    plan = estimate(client, service).json()
+    confirm(client, plan).raise_for_status()
+    assert wait(client)['job']['status'] == 'paused'
+    with runner.db() as db:
+        saved = runner.plan(db, service['id'], plan['plan_id'])
+        assert db.execute('SELECT key FROM cache WHERE key=?', (saved['collection_key'],)).fetchone() is None
+        assert len(saved['results']) == 2
+
+
+def test_new_grouping_collection_version_preserves_individual_cache(client):
+    runner, service = setup(client)
+    runner.transport = lambda payload, key: reply(payload)
+    old_plan = estimate(client, service).json()
+    confirm(client, old_plan).raise_for_status()
+    assert wait(client)['job']['status'] == 'completed'
+    with runner.db() as db:
+        saved = runner.plan(db, service['id'], old_plan['plan_id'])
+        db.execute('DELETE FROM cache WHERE key=?', (saved['collection_key'],))
+        saved.pop('collection_version')
+        saved['collection'].pop('groups')
+        runner.save(db, saved)
+    current = client.get('/api/services/test-service').json()
+    reselected = client.post('/api/services/test-service/api-reselect', json={
+        'revision': current['revision'], 'plan_id': old_plan['plan_id'], 'target': 1})
+    reselected.raise_for_status()
+    proposal = reselected.json()['proposal']
+    assert proposal['grouping_source'] == 'identical-previews-only'
+    assert set(proposal['shortlist']) == {'u0:1', 'u1:1'}  # broad shared scene never merges them
+    assert any('precedente non contiene gruppi' in warning for warning in proposal['warnings'])
+    new_plan = estimate(client, reselected.json()).json()
+    assert new_plan['cached_count'] == 2 and new_plan['uncached_count'] == 0
+    assert new_plan['interpretation_request_count'] == 0 and new_plan['collection_request_count'] == 1

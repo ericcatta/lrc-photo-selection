@@ -221,3 +221,26 @@ Backend riavviato dopo verifica di entrambi i servizi inattivi. La lettura final
 mostra 44 identificativi compatibili o candidati disponibili (incluse snapshot),
 GPT-6.2 Sol/Astra disponibili e modello scelto ancora GPT-5.4 mini. Nessuna
 modifica ai risultati o alle selezioni esistenti.
+
+### 2026-11-19 — Situazioni distinte prima delle varianti
+
+La selezione condivisa conserva una rappresentante per ciascun gruppo distinto
+prima delle seconde e terze varianti; il target resta morbido. Verificati con
+fixture sintetiche 10 gruppi → 20 foto bilanciate e 23 gruppi → 23 foto con target
+20, inclusioni manuali conteggiate, esclusioni, categorie e incerti preservati.
+Il locale usa firme prudenti delle anteprime e, quando presenti, embedding;
+strutture uniformi e soggetti minuscoli non sono automaticamente equivalenti.
+Testato il raggruppamento completo senza catene di somiglianza. Il confronto API
+valida una partizione completa degli indici pertinenti; cache individuali
+preservate, nuova versione soltanto del confronto globale.
+
+222 test backend superati (helper Apple Vision escluso), 62 frontend e build
+riusciti. Entrambi gli smoke Chrome headless superati, zero chiamate cloud reali
+né accesso ai cataloghi. La qualità dei nuovi gruppi su fotografie reali resta
+da verificare manualmente; le proposte precedenti non sono ricalcolate da sole.
+
+README riscritto con guida pubblica d’installazione e uso; aggiunto
+scripts/install.command. Sintassi shell, link locali e sequenza dell’installer
+verificati con comandi simulati. Installazione da zero su un altro Mac non
+eseguita. Revisione pre-pubblicazione: nessuna credenziale reale, foto, catalogo
+o database runtime individuati nei file tracciati e nella cronologia esaminata.

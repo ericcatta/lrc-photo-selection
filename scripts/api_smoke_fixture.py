@@ -46,7 +46,8 @@ def build_fixture(root):
         elif kind=='collection_ranking':
             marker='\nValutazioni di TUTTE le anteprime, indici dei provini: '
             records=json.loads(payload['input'][0]['content'][0]['text'].split(marker,1)[1])
-            assessment={'ranking':[record['index'] for record in records if record['assessment']['match']=='yes'],'warnings':[]}
+            matched=[record['index'] for record in records if record['assessment']['match']=='yes']
+            assessment={'ranking':matched,'groups':[{'members':matched,'reason':'Situazione sintetica ripetuta'}] if matched else [],'warnings':[]}
         else:
             assert kind=='photo_assessment'
             assessment={'match':'yes','reason':'Forma blu sintetica verificata dalla simulazione.','scene':'Scena sintetica','quality_issues':[],'preference_score':.8,'category_matches':{'forms':'yes'}}

@@ -40,3 +40,23 @@ Qwen3-VL 4B quantizzato usa MLX sul Mac. Ogni anteprima riceve una valutazione s
 La shortlist è una proposta da rivedere, distinta dalle candidate conservative. Solo «Usa questa proposta», dopo avviso di copertura, registra decisioni annullabili nel servizio: nessuna mutazione Lightroom. Le decisioni manuali preesistenti prevalgono. Il piano stelle è un passaggio ulteriore e continua a consentire solo 0→1.
 
 La configurazione OpenAI espone chiave (portachiavi nativo) e modello. Il costruttore Responses conserva il testo originale come contenuto utente distinto dalle istruzioni tecniche e imposta store=false. Il trasporto Responses è abilitato esclusivamente da un piano stimato e confermato; salvare la configurazione non invia foto. `api-jobs.sqlite3` conserva piani immutabili, prenotazioni di budget, consumi e cache. Il recupero dopo un’interruzione avviene solo dopo il lock del server e non invia richieste. Il catalogo modelli separa disponibilità aggiornata dall’account e capacità/tariffe verificate. Vedere `openai.md`.
+
+
+## Selezione per gruppi, poi varianti
+
+`selection.py` centralizza copertura delle categorie, precedenza manuale,
+rappresentanza di tutti i gruppi disponibili e aggiunta bilanciata di alternative.
+La quantità non tronca il primo giro: ciascun gruppo distinto conserva almeno
+una foto idonea. Nei giri successivi si preferiscono i gruppi meno rappresentati;
+le inclusioni manuali sono già conteggiate. Il ranking sceglie la qualità dentro
+il gruppo. L’ordinamento finale non usa più un punteggio misto 70/30 per sacrificare
+una situazione a favore di una variante qualitativamente migliore.
+
+Il locale confronta soltanto anteprime derivate, con firma visiva prudente
+(inquadratura, struttura, colore; controllo aggiuntivo degli embedding quando
+presenti). I gruppi richiedono somiglianza tra tutti i membri per evitare catene
+che uniscano situazioni diverse. Evidenze assenti o insufficienti restano separate.
+Le descrizioni di scena da sole non dimostrano equivalenza. OpenAI restituisce una
+partizione motivata dei risultati pertinenti dal confronto globale, validata dal
+backend. Entrambi restano interpretazioni da rivedere; nessun raggruppamento è
+un’affermazione di identità personale o di equivalenza degli originali.

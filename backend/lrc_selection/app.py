@@ -578,6 +578,9 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
             if semantic is not None:
                 proposal.update({k: semantic[k] for k in ('shortlist', 'shortlist_reasons', 'query_scores')})
                 proposal['review_ids'] = semantic.get('review_ids', [])
+                for key in ('selection_policy', 'selection_groups', 'coverage'):
+                    if key in semantic:
+                        proposal[key] = semantic[key]
                 proposal['semantic'] = {k: semantic[k] for k in ('model', 'query', 'method')}
                 proposal['warnings'] = semantic['warnings']
                 if 'instruction_interpretation' in semantic:

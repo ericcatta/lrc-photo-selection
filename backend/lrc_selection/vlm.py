@@ -296,7 +296,8 @@ def build_instruction_proposal(store, snapshot, vlm, progress=None):
                 records[pid] = {'error': 'Anteprima mancante'}
             else:
                 path = store.preview_path(snapshot['id'], pid)
-                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                raw = path.read_bytes()
+                digest = hashlib.sha256(raw).hexdigest()
                 if digest != photo['preview_sha256']:
                     raise ValueError('Anteprima cambiata: reimportare prima di analizzare')
                 def compute():
@@ -310,7 +311,8 @@ def build_instruction_proposal(store, snapshot, vlm, progress=None):
                                 'scene': '', 'quality_issues': [], 'preference_score': 0.5, 'category_matches': {c['id']: 'uncertain' for c in interpretation['requested_categories']}, 'error': 'Risposta non valida',
                                 'error_kind': getattr(error, 'kind', 'categories' if isinstance(error, CategoryValidationError) else 'schema')}
                 assessment = cache.get_or_compute(digest, 'instruction-assessment', assessment_identity, compute)
-                records[pid] = {'preview_sha256': digest, 'assessment': assessment}
+                from .selection import visual_signature
+                records[pid] = {'preview_sha256': digest, 'assessment': assessment, 'visual_signature': visual_signature(raw)}
             assessments[pid] = assessment
             if progress:
                 progress(index + 1, len(snapshot['photos']))
@@ -338,26 +340,15 @@ def proposal_from_assessments(snapshot, interpretation, assessments, model, reco
     eligible = [p['id'] for p in snapshot['photos'] if decisions.get(p['id'], {}).get('state') not in {'excluded', 'alternative'}]
     shortlist = [pid for pid in eligible if decisions.get(pid, {}).get('state') in SELECTED and pid not in local_review]
     matches = [] if blocked else [pid for pid in eligible if assessments.get(pid, {}).get('match') == 'yes' and pid not in shortlist and pid not in local_review]
-    # Rank preferences inside tentative scene labels, then alternate scene heads.
-    # These labels only diversify the review list; they are not equivalence groups.
-    scenes = {}
-    for pid in matches:
-        scene = assessments[pid]['scene'].strip().casefold() or ('unknown:' + pid)
-        scenes.setdefault(scene, []).append(pid)
-    for members in scenes.values():
-        members.sort(key=lambda pid: -assessments[pid]['preference_score'])
-    ordered = []
-    while scenes:
-        heads = sorted(scenes, key=lambda scene: -assessments[scenes[scene][0]]['preference_score'])
-        for scene in heads:
-            ordered.append(scenes[scene].pop(0))
-            if not scenes[scene]:
-                del scenes[scene]
+    # Scene wording is never evidence of equivalence. Photographic merit orders variants.
+    ordered = sorted(matches, key=lambda pid: -assessments[pid]['preference_score'])
     target = settings['target']
     from .semantic import (select_with_category_coverage, local_confirmed_coverage_assessments,
                            retain_local_review_candidates, LOCAL_UNCERTAINTY_POLICY)
+    from .selection import group_visual_neighbors, SELECTION_POLICY, GROUPING_POLICY
+    groups = group_visual_neighbors(shortlist + ordered, {pid: record.get('visual_signature') for pid, record in records.items()})
     coverage_result = select_with_category_coverage(ordered, shortlist, local_confirmed_coverage_assessments(assessments),
-                                                     interpretation['requested_categories'], target)
+                                                     interpretation['requested_categories'], target, groups)
     shortlist = coverage_result['shortlist']
     warnings.extend(coverage_result['warnings'])
     confirmed_count = len(shortlist)
@@ -395,13 +386,16 @@ def proposal_from_assessments(snapshot, interpretation, assessments, model, reco
     reasons = {pid: ('Decisione manuale preservata.' if decisions.get(pid, {}).get('state') in SELECTED
                      else ('Da rivedere, conservata per prudenza: ' + assessments.get(pid, {}).get('reason', 'Valutazione non disponibile.') if pid in review_ids
                            else assessments[pid]['reason'])) for pid in shortlist}
+    reasons.update({pid: assessments[pid]['reason'] + ' Alternativa nello stesso gruppo visivo, disponibile per i turni aggiuntivi.' for pid in matches if pid not in shortlist})
     return {'interpretations': {'schema_version': 1, 'model': model, 'records': records,
                                 'comparisons': [], 'warning': warnings[0]},
             'shortlist': shortlist, 'review_ids': review_ids, 'shortlist_reasons': reasons, 'query_scores': {},
             'model': model, 'query': instructions, 'warnings': warnings,
             'method': {'name': PROMPT_REVISION, 'calibrated': False, 'changes_candidate_decisions': False,
-                       'ranking': 'preference-score-then-scene-round-robin',
+                       'ranking': SELECTION_POLICY, 'grouping': GROUPING_POLICY,
                        'preference_score_kind': 'user-preferences-and-photographic-merit-ordinal-not-probability',
                        'uncertainty_policy': LOCAL_UNCERTAINTY_POLICY},
             'instruction_interpretation': interpretation, 'assessments': assessments,
-            'blocked': blocked, 'coverage': coverage_result['coverage'], 'diagnostics': diagnostics, 'incomplete': incomplete, 'partial': partial}
+            'blocked': blocked, 'coverage': coverage_result['coverage'],
+            'selection_groups': coverage_result['selection_groups'], 'selection_policy': SELECTION_POLICY,
+            'diagnostics': diagnostics, 'incomplete': incomplete, 'partial': partial}

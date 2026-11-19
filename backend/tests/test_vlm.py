@@ -142,7 +142,7 @@ def test_preferences_rank_matches_before_source_order_with_scene_variety(tmp_pat
                 'quality_issues':[],'preference_score':{'bird':.2,'bird2':.9,'snow':.3}[value], 'category_matches':{}}
     vlm.assess=assess
     result=build_instruction_proposal(store,snapshot,vlm)
-    assert result['shortlist']==['1']
+    assert result['shortlist']==['1','2','0']
     assert result['assessments']['1']['preference_score']==.9
     snapshot['settings']['target']=3
     assert build_instruction_proposal(store,snapshot,vlm)['shortlist']==['1','2','0']
@@ -195,12 +195,12 @@ def test_requested_subject_categories_balance_birds_and_human_portraits(tmp_path
                 'category_matches':{'birds':'no' if portrait else 'yes','human_portraits':'yes' if portrait else 'no'}}
     vlm.assess=assess
     result=build_instruction_proposal(store,snapshot,vlm)
-    assert result['shortlist']==['0','2']
+    assert result['shortlist']==['0','2','1']
     assert all(c['status']=='represented' for c in result['coverage'])
     assert result['instruction_interpretation']['original_instructions']=='uccelli e ritratti'
     snapshot['settings']['target']=1
     result=build_instruction_proposal(store,snapshot,vlm)
-    assert result['shortlist']==['0','2']
+    assert result['shortlist']==['0','2','1']
     assert any('Quantità indicativa superata' in w for w in result['warnings'])
 
 
@@ -489,13 +489,13 @@ def test_pure_recovery_retains_all_unknowns_after_confirmed_target_without_model
     before=copy.deepcopy((snapshot,interpretation,assessments,records))
     monkeypatch.setattr(LocalVLM,'__init__',lambda *args:pytest.fail('Recovery must not instantiate a model'))
     recovered=proposal_from_assessments(snapshot,interpretation,assessments,{'adapter':'stored-synthetic'},records)
-    assert recovered['shortlist']==['0','3','4','5']
+    assert recovered['shortlist']==['0','1','3','4','5']
     assert recovered['review_ids']==['3','4','5']
     assert recovered['partial'] and not recovered['incomplete']
-    assert recovered['diagnostics']['confirmed_proposal']==1
+    assert recovered['diagnostics']['confirmed_proposal']==2
     assert recovered['diagnostics']['invalid']==1 and recovered['diagnostics']['missing_preview']==1
     assert recovered['diagnostics']['yes']==2  # no fabricated conversion of unknowns
-    assert recovered['coverage'][0]['selected_ids']==['0']
+    assert recovered['coverage'][0]['selected_ids']==['0','1']
     assert all('Da rivedere' in recovered['shortlist_reasons'][pid] for pid in recovered['review_ids'])
     assert (snapshot,interpretation,assessments,records)==before
 

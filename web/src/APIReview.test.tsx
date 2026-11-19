@@ -264,3 +264,14 @@ it('keeps the total-budget uncertainty visible when a priced estimate follows un
   expect(screen.getByLabelText('Confermo l’invio a OpenAI di queste anteprime con il mio testo originale e il limite di costo indicato.')).toBeTruthy();
   expect(calls.some(call=>call.url.endsWith('/api-confirm'))).toBe(false);
 });
+
+it('states the confirmed analysis perimeter without treating the sample as the complete import',async()=>{
+  render(<APIReview service={service} dirty={false} disabled={false} update={vi.fn()}/>);
+  fireEvent.click(screen.getByRole('button',{name:'Stima e rivedi invio a OpenAI'}));
+  await waitFor(()=>expect((screen.getByRole('button',{name:'Calcola stima senza inviare foto'}) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole('button',{name:'Calcola stima senza inviare foto'}));
+  const perimeter=await screen.findByText(/Varietà valutata su 1 foto delle 2 importate/);
+  expect(perimeter.textContent).toContain('le foto non incluse non contribuiscono alla varietà della proposta');
+  expect(calls.find(call=>call.url.endsWith('/api-estimate'))?.body?.photo_ids).toEqual(['p0']);
+  expect(calls.some(call=>call.url.endsWith('/api-confirm'))).toBe(false);
+});

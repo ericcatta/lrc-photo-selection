@@ -91,7 +91,7 @@ def test_instruction_analysis_review_acceptance_preserves_manual_work_and_undo(c
     assert client.get('/api/capabilities').json()['instructions'] is True
     reviewed = analyze(client, service, instruction_model)
     assert reviewed['decisions'] == before
-    assert set(reviewed['proposal']['shortlist']) == {'u0:1', 'u1:1'}
+    assert set(reviewed['proposal']['shortlist']) == {'u0:1', 'u1:1', 'u4:1'}
     assert reviewed['proposal']['instruction_interpretation']['summary'] == 'Solo forme rosse sintetiche'
     assert len([call for call in instruction_model.calls if call[0] == 'assess']) == 5
     endpoint = '/api/services/test-service/accept-shortlist'
@@ -102,7 +102,7 @@ def test_instruction_analysis_review_acceptance_preserves_manual_work_and_undo(c
     accepted = accepted.json()
     assert all(accepted['decisions'][pid] == decision for pid, decision in before.items())
     assert accepted['decisions']['u0:1'] == {'state': 'candidate', 'locked': False}
-    assert accepted['decisions']['u4:1'] == {'state': 'excluded', 'locked': False}
+    assert accepted['decisions']['u4:1'] == {'state': 'candidate', 'locked': False}
     assert [p['baseline_rating'] for p in accepted['photos']] == ratings
     assert 'confirmed_batch_id' not in accepted
     restored = client.post('/api/services/test-service/undo', json={'revision': accepted['revision']})
