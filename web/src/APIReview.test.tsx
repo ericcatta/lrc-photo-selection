@@ -137,3 +137,35 @@ it('makes a previously configured budget visible without clearing it',async()=>{
   await screen.findByText(/Budget facoltativo attivo:/);
   expect((screen.getByLabelText('Budget complessivo del servizio (USD)') as HTMLInputElement).value).toBe('0.1');
 });
+
+it('explains insufficient budget beside confirmation and edits it without sending',async()=>{
+  const baseFetch=globalThis.fetch;
+  vi.stubGlobal('fetch',vi.fn(async(input:string,init?:RequestInit)=>{
+    const result=await baseFetch(input,init);
+    if(!input.endsWith('/api-estimate'))return result;
+    const plan=await result.json();
+    const body=JSON.parse(String(init?.body));
+    return response({...plan,reserve_usd:.6901,budget_usd:body.budget_usd,remaining_usd:body.budget_usd,can_confirm:body.budget_usd===null});
+  }));
+  render(<APIReview service={service} dirty={false} disabled={false} update={vi.fn()}/>);
+  fireEvent.click(screen.getByRole('button',{name:'Stima e rivedi invio a OpenAI'}));
+  const budget=screen.getByLabelText('Budget complessivo del servizio (USD)') as HTMLInputElement;
+  await waitFor(()=>expect(budget.disabled).toBe(false));
+  fireEvent.change(budget,{target:{value:'0.05'}});
+  fireEvent.click(screen.getByRole('button',{name:'Calcola stima senza inviare foto'}));
+  const blocker=await screen.findByRole('alert');
+  expect(blocker.textContent).toContain('Invio bloccato: il budget disponibile');
+  const checkbox=screen.getByLabelText(/Confermo l’invio a OpenAI/) as HTMLInputElement;
+  await waitFor(()=>expect((screen.getByRole('button',{name:'Modifica budget facoltativo'}) as HTMLButtonElement).disabled).toBe(false));
+  expect(checkbox.disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button',{name:'Modifica budget facoltativo'}));
+  expect(document.activeElement).toBe(budget);
+  expect(budget.closest('details')?.open).toBe(true);
+  expect(budget.value).toBe('0.05');
+  fireEvent.change(budget,{target:{value:''}});
+  expect(screen.queryByRole('alert')).toBeNull();
+  fireEvent.click(screen.getByRole('button',{name:'Calcola stima senza inviare foto'}));
+  await waitFor(()=>expect((screen.getByLabelText(/Confermo l’invio a OpenAI/) as HTMLInputElement).disabled).toBe(false));
+  expect((screen.getByLabelText(/Confermo l’invio a OpenAI/) as HTMLInputElement).checked).toBe(false);
+  expect(calls.some(c=>c.url.endsWith('/api-confirm'))).toBe(false);
+});

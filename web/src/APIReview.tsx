@@ -1,4 +1,4 @@
-import {useEffect,useState,type ReactNode} from 'react';
+import {useEffect,useState,useRef,type ReactNode} from 'react';
 import {api,photoPath,servicePath,type Service} from './api';
 
 type Job={plan_id:string;status:string;completed:number;total:number;error:string|null;final_target?:number};
@@ -12,6 +12,9 @@ const describe=(e:unknown)=>e instanceof Error?e.message:'Operazione non complet
 
 export function APIReview({service:s,dirty,disabled,update}:{service:Service;dirty:boolean;disabled:boolean;update:(s:Service)=>void}){
   const path=servicePath(s.id);
+  const budgetDetails=useRef<HTMLDetailsElement>(null);
+  const budgetInput=useRef<HTMLInputElement>(null);
+  function editBudget(){if(budgetDetails.current)budgetDetails.current.open=true;budgetInput.current?.focus();}
   const [open,setOpen]=useState(false),[budget,setBudget]=useState(''),[selected,setSelected]=useState<string[]>([]);
   const [usage,setUsage]=useState<Usage|null>(null),[estimate,setEstimate]=useState<Estimate|null>(null);
   const [ack,setAck]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
@@ -67,7 +70,7 @@ export function APIReview({service:s,dirty,disabled,update}:{service:Service;dir
         <label>Numero finale OpenAI<input type="number" min={1} max={s.photos.length} value={Number.isNaN(target)?'':target} onChange={e=>{setTarget(e.target.valueAsNumber);setEstimate(null);setAck(false);}}/></label>
         <p className="hint">Indipendente dalle candidate locali. Dopo l’analisi puoi cambiarlo riutilizzando le valutazioni, senza nuovi invii.</p>
         {usage?.job?.status==='completed'&&<button type="button" disabled={!validTarget||dirty||disabled} onClick={()=>void reselect()}>Aggiorna numero finale senza nuove chiamate</button>}
-        <details><summary>{budget.trim()&&Number.isFinite(Number(budget))?'Budget facoltativo attivo: '+usd(Number(budget)):'Budget complessivo facoltativo'}</summary><label>Budget complessivo del servizio (USD)<input type="number" min="0" step="0.01" placeholder="Nessun limite aggiuntivo" value={budget} onChange={e=>{setBudget(e.target.value);setEstimate(null);setAck(false);}}/></label><p className="hint">Puoi lasciarlo vuoto: la conferma autorizza solo il limite prudenziale della stima corrente. Un budget impostato comprende anche il consumo precedente. Il saldo crediti OpenAI non viene verificato.</p></details>
+        <details ref={budgetDetails}><summary>{budget.trim()&&Number.isFinite(Number(budget))?'Budget facoltativo attivo: '+usd(Number(budget)):'Budget complessivo facoltativo'}</summary><label>Budget complessivo del servizio (USD)<input ref={budgetInput} type="number" min="0" step="0.01" placeholder="Nessun limite aggiuntivo" value={budget} onChange={e=>{setBudget(e.target.value);setEstimate(null);setAck(false);}}/></label><p className="hint">Puoi lasciarlo vuoto: la conferma autorizza solo il limite prudenziale della stima corrente. Un budget impostato comprende anche il consumo precedente. Il saldo crediti OpenAI non viene verificato.</p></details>
         <div className="api-selection-actions"><button type="button" onClick={()=>changeSelection(eligible.map(p=>p.id))}>Tutte le anteprime importate</button><button type="button" onClick={()=>changeSelection((s.proposal?.shortlist??[]).filter(id=>eligible.some(p=>p.id===id)))}>Solo proposta locale</button><button type="button" onClick={()=>changeSelection([])}>Deseleziona tutte</button><label className="check"><input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)}/>Mostra anche alternative e altre foto</label></div>
         <div className="api-photo-picker">{eligible.filter(p=>showAll||selected.includes(p.id)).map(p=><label key={p.id} className="api-photo-choice"><input type="checkbox" checked={selected.includes(p.id)} onChange={e=>changeSelection(e.target.checked?[...selected,p.id]:selected.filter(id=>id!==p.id))}/><img src={'/api'+photoPath(s.id,p.id)+'/preview'} alt="" loading="lazy"/><span>{p.filename}<small>ID {p.id}</small></span></label>)}</div>
         <p>{selected.length} anteprime selezionate</p>
@@ -77,7 +80,11 @@ export function APIReview({service:s,dirty,disabled,update}:{service:Service;dir
         <details><summary>Testo originale che riceverà OpenAI</summary><pre className="api-original-prompt">{estimate.instructions}</pre>{estimate.criteria.length>0&&<><p>Criteri aggiuntivi del servizio</p><ul>{estimate.criteria.map((c,i)=><li key={i}>{c}</li>)}</ul></>}</details>
         <details><summary>Elenco esatto: {estimate.photos.length} anteprime</summary><ul>{estimate.photos.map(p=><li key={p.id}>{p.filename} · ID {p.id}{p.cached?' · risultato in cache':''}</li>)}</ul></details>
         {estimate.warnings.map((warning,i)=><p className="warning" key={i}>{warning}</p>)}
-        <label className="check"><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)} disabled={!estimate.can_confirm||busy}/>Confermo l’invio a OpenAI di queste anteprime con il mio testo originale e il limite di costo indicato.</label>
+        {!estimate.can_confirm&&<div className="warning" role="alert" id="api-confirm-blocker">
+          <p>Invio bloccato: il budget disponibile ({usd(estimate.remaining_usd??0)}) è inferiore alla riserva necessaria ({usd(estimate.reserve_usd)}). Puoi ridurre le anteprime oppure modificare il budget facoltativo, lasciandolo vuoto se non vuoi un limite complessivo. Poi ricalcola la stima e conferma l’invio.</p>
+          <button type="button" disabled={busy} onClick={editBudget}>Modifica budget facoltativo</button>
+        </div>}
+        <label className="check"><input aria-describedby={!estimate.can_confirm?'api-confirm-blocker':undefined} type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)} disabled={!estimate.can_confirm||busy}/>Confermo l’invio a OpenAI di queste anteprime con il mio testo originale e il limite di costo indicato.</label>
         <button className="primary" type="button" disabled={!ack||!estimate.can_confirm||busy||dirty||estimate.revision!==s.revision} onClick={()=>void confirm()}>Conferma e invia a OpenAI</button>
       </section>}
       {error&&<p className="warning" role="alert">{error}</p>}
