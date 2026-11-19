@@ -2,6 +2,8 @@
 
 **Una prima selezione ragionata delle fotografie, da rifinire in Lightroom Classic.**
 
+**Edizione italiana** · [🇬🇧 English edition — interfaccia, plugin e documentazione in inglese](https://github.com/ericcatta/lrc-photo-selection-en)
+
 LrC Photo Selection collega un plugin Lightroom a una web app che funziona sul Mac. Parti dalle foto di un servizio, descrivi cosa vuoi conservare e rivedi una proposta prima di riportarla in Lightroom attraverso le stelle. L’interfaccia e la guida sono in italiano.
 
 L’obiettivo non è scegliere soltanto le immagini più nitide: contano le tue istruzioni, la varietà delle situazioni e il valore fotografico. Un’espressione, una composizione o un momento significativo possono prevalere sulla perfezione tecnica.
