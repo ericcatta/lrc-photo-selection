@@ -33,7 +33,7 @@ def instruction_model(client, monkeypatch):
             self.entered.set()
             assert self.release.wait(3), 'Synthetic test did not release analysis'
             return {'summary': 'Solo forme rosse sintetiche', 'criteria': ['Forma rossa'],
-                    'ambiguities': [], 'unsupported': [], 'requested_categories': []}
+                    'ambiguities': [], 'unsupported': [], 'category_mode':'any', 'requested_categories': []}
 
         def assess(self, path, interpretation):
             with Image.open(path) as image:

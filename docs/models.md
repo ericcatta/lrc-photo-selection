@@ -75,3 +75,7 @@ Prima di cambiare modello, il criterio di accettazione resta: categorie distinte
 Dopo aver letto l'esito negativo del controllo di copertura, il proprietario ha chiesto esplicitamente di sostituire il 4B con il 9B e rimuovere il precedente. La decisione iniziale di non sostituire, sopra riportata, è quindi superata. Si adotta Qwen3.5-9B MLX 4 bit, revisione `938d8919941c6e7efd3c7150eff7fe9d12afa631`, con MLX-VLM 0.4.3. Il limite sulla copertura delle categorie resta aperto: non è dichiarato risolto o validato. Nessuna nuova analisi delle fotografie viene avviata dall'installazione.
 
 Il modello attivo è selezionato esplicitamente in `local-model-selection.json` nello spazio dati locale. Lo script di installazione permette `--model Qwen3.5-9B-MLX-4bit --activate`; il caricamento durante l'analisi resta offline. Il precedente 4B viene eliminato solo dopo verifica dei file e della selezione attiva. SigLIP 2 è un encoder distinto e rimane, perché non è il modello sostituito.
+
+### Aggiornamento del 19 novembre: correzione dell'integrazione v9
+
+Il difetto riprodotto ieri sulle categorie è corretto nei casi sintetici controllati: 11/11 esiti attesi con il medesimo Qwen3.5-9B. Vedere [report v9](benchmarks/local-model-9b-v9.json) e [verifiche](validation.md). I risultati negativi precedenti restano storici; il modello e il runtime non sono stati sostituiti. La qualità della selezione su fotografie reali rimane da collaudare.

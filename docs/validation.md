@@ -94,3 +94,13 @@ Interfaccia: tutte le schede del filtro sono scorribili senza pulsante di carica
 ## Sostituzione locale autorizzata: Qwen3.5-9B
 
 Il proprietario ha richiesto la sostituzione anche dopo aver ricevuto l'esito sintetico negativo sulla copertura (vedi docs/models.md). Installati MLX-VLM 0.4.3 e miniaudio 1.73; pip check riuscito. Caricamento offline nel runtime definitivo verificato senza inferenza. Attivato Qwen3.5-9B-MLX-4bit mediante configurazione atomica; backend riavviato e capacità istruzioni verificata. Rimosso esclusivamente il precedente Qwen3-VL-4B dopo confronto della provenienza: 3.109.734.493 byte. SigLIP preservato perché componente distinto. Nessun servizio, decisione manuale, foto originale o valutazione Lightroom modificato; nessuna richiesta OpenAI. 144 test backend superati, uno Apple Vision escluso come nel controllo precedente.
+
+## 19 novembre 2026 — Blocco prima della lettura delle fotografie
+
+Diagnosi in sola lettura: 0 tentativi, 0 risposte non valide, 160 foto non valutate, 160 candidate ancora salvate. Il 9B aveva inventato ambiguità e limitazioni generiche interpretando l'elenco «uccelli, ritratti, landscape»; la pipeline aveva confuso blocco delle istruzioni e fallimento delle risposte visive.
+
+Correzione v9: parser conservativo solo per elenchi di singole parole minuscole, senza operatori o criteri aggiuntivi; il resto resta affidato al modello. Originale preservato. Distinzione esplicita tra categorie alternative nella raccolta e compresenza richiesta nella stessa foto. Nessun criterio derivato viene aggiunto alle istruzioni effettive della valutazione visiva. Rimossi suggerimenti di soggetti non richiesti dal prompt generale. Contraddizioni e istruzioni non verificabili restano da chiarire; le risposte incoerenti vengono ritentate/respinte, non convertite artificialmente in corrispondenze. Cache invalidata dalla revisione v9.
+
+I fallimenti ora indicano la causa e mantengono separati risultati parziali e interpretazioni precedenti. L'interfaccia mostra le candidate salvate anche quando il primo tentativo fallisce; corregge in lettura il vecchio messaggio «0 risposte non valide», senza riscrivere il servizio.
+
+Verifica reale del modello su sole figure sintetiche: 11/11 controlli superati, 61,05 secondi, picco MLX circa 7,71 GB. Report [v9](benchmarks/local-model-9b-v9.json); i tentativi falliti v7/v8 restano tracciati. Riproducibile con scripts/check_local_model.py. Questi controlli non validano il merito fotografico o l'affidabilità generale delle istruzioni. Nessuna nuova analisi delle foto dell'utente, richiesta API o modifica di stelle.

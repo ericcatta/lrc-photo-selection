@@ -17,7 +17,7 @@ class FakeVLM:
     def interpret(self, instructions, criteria):
         self.interpret_calls.append((instructions, criteria))
         return {'summary': instructions or 'qualsiasi foto', 'criteria': criteria,
-                'ambiguities': self.ambiguities, 'unsupported': [], 'requested_categories': []}
+                'ambiguities': self.ambiguities, 'unsupported': [], 'category_mode':'any', 'requested_categories': []}
     def assess(self, path, interpretation):
         value = path.read_bytes().decode()
         self.assess_calls.append(value)
@@ -92,7 +92,7 @@ def test_failed_output_uncertain_not_cached_and_missing_preview(tmp_path):
 
 def test_structured_generation_single_repair_and_strict_schema():
     vlm=LocalVLM.__new__(LocalVLM)
-    outputs=iter(['invalid',json.dumps({'summary':'birds','criteria':[],'ambiguities':[],'unsupported':[],'requested_categories':[]})])
+    outputs=iter(['invalid',json.dumps({'summary':'birds','criteria':[],'ambiguities':[],'unsupported':[],'category_mode':'any','requested_categories':[]})])
     calls=[]
     def generate(prompt,image,tokens):
         calls.append(tokens)
@@ -150,7 +150,7 @@ def test_specific_conflicts_and_unsupported_are_reported_and_blocked(tmp_path):
     store,snapshot,vlm=fixture(tmp_path)
     vlm.interpret=lambda *args:{'summary':'conflict','criteria':[],
         'ambiguities':['Solo uccelli e nessun uccello sono in conflitto.'],
-        'unsupported':['Identità certa della stessa persona in tutte le foto.'],'requested_categories':[]}
+        'unsupported':['Identità certa della stessa persona in tutte le foto.'],'category_mode':'any','requested_categories':[]}
     result=build_instruction_proposal(store,snapshot,vlm)
     assert result['blocked'] and vlm.assess_calls==[]
     assert any('Solo uccelli e nessun uccello' in w for w in result['warnings'])
@@ -184,7 +184,7 @@ def test_requested_subject_categories_balance_birds_and_human_portraits(tmp_path
     snapshot['settings'].update(instructions='uccelli e ritratti',target=2)
     categories=[{'id':'birds','description':'Uccelli'},{'id':'human_portraits','description':'Ritratti di persone'}]
     vlm.interpret=lambda *args:{'summary':'Uccelli e ritratti di persone','criteria':[],
-        'ambiguities':[],'unsupported':[],'requested_categories':categories}
+        'ambiguities':[],'unsupported':[],'category_mode':'any','requested_categories':categories}
     def assess(path,context):
         portrait=path.read_bytes()==b'snow'  # synthetic label, not an actual image/model
         return {'match':'yes','reason':'synthetic category evidence','scene':'single unique label',
@@ -203,7 +203,7 @@ def test_requested_subject_categories_balance_birds_and_human_portraits(tmp_path
 
 def test_missing_category_response_fails_to_uncertain(tmp_path):
     store,snapshot,vlm=fixture(tmp_path)
-    vlm.interpret=lambda *args:{'summary':'birds','criteria':[],'ambiguities':[],'unsupported':[],
+    vlm.interpret=lambda *args:{'summary':'birds','criteria':[],'ambiguities':[],'unsupported':[],'category_mode':'any',
         'requested_categories':[{'id':'birds','description':'Uccelli'}]}
     result=build_instruction_proposal(store,snapshot,vlm)
     assert result['shortlist']==[]
@@ -220,19 +220,18 @@ def test_prompt_explains_mixed_categories_and_default_portrait_people(tmp_path):
         return {}
     vlm._structured=structured
     vlm.interpret('uccelli e ritratti',[])
-    assert "'uccelli e ritratti'" in prompts[0]
-    assert "'Ritratti' senza specificazione indica persone" in prompts[0]
+    assert '"instructions": "uccelli e ritratti"' in prompts[0]
+    assert "'Ritratti' non specificati significa persone" in prompts[0]
     preview=tmp_path/'synthetic.jpg'
     Image.new('RGB',(10,10),'white').save(preview)
     vlm.assess(preview,{'original_instructions':'uccelli e ritratti','requested_categories':[]})
     assert 'non richiedere tutte le altre nella stessa foto' in prompts[1]
-    assert 'ritratti di persone, non ritratti di uccelli' in prompts[1]
     assert 'Le preferenze esplicite prevalgono sul tuo giudizio di bellezza' in prompts[1]
     assert 'composizione, espressività e significato del momento' in prompts[1]
     assert 'non assegnare automaticamente 0.5 a tutte' in prompts[1]
     assert 'non ridurre il punteggio contando difetti tecnici' in prompts[1].lower()
     assert 'registra i difetti in quality_issues' in prompts[1]
-    assert 'Non sostituire un ritratto richiesto con un uccello più nitido' in prompts[1]
+    assert "Non sostituire una categoria richiesta con un'immagine di un'altra categoria più nitida" in prompts[1]
 
 
 def test_placeholder_and_copied_subject_list_are_rejected_without_guesses(tmp_path):
@@ -257,7 +256,7 @@ def test_repair_has_actual_parse_error_and_schema_without_response_echo():
     vlm=LocalVLM.__new__(LocalVLM)
     prompts=[]
     answers=iter(['{"summary":"DO_NOT_ECHO",',json.dumps({'summary':'synthetic', 'criteria':[],
-        'ambiguities':[],'unsupported':[],'requested_categories':[]})])
+        'ambiguities':[],'unsupported':[],'category_mode':'any','requested_categories':[]})])
     def generate(prompt,image,max_tokens):
         prompts.append((prompt,max_tokens))
         return next(answers)
@@ -321,3 +320,148 @@ def test_local_reason_bound_does_not_change_shared_api_assessment_schema():
     assert Assessment.model_validate(data).reason==data['reason']
     with pytest.raises(ValueError):
         LocalAssessment.model_validate(data)
+
+
+def test_plain_category_list_does_not_ask_model_to_invent_limitations(tmp_path):
+    from lrc_selection.vlm import _plain_category_interpretation
+    original='uccelli, ritratti, landscape'
+    result=_plain_category_interpretation(original,[])
+    assert result['summary']==original
+    assert [c['description'] for c in result['requested_categories']]==['uccelli','Ritratti di persone','landscape']
+    assert result['category_mode']=='any' and result['category_only'] is True
+    assert result['ambiguities']==[] and result['unsupported']==[]
+    assert _plain_category_interpretation(original,[])==result
+    vlm=LocalVLM.__new__(LocalVLM)
+    vlm._generate=lambda *args:pytest.fail('Plain subject list must not invoke generative interpretation')
+    assert vlm.interpret(original,[])==result
+    store,snapshot,fake=fixture(tmp_path)
+    snapshot['settings']['instructions']=original
+    def assess(path,context):
+        assert context['original_instructions']==original
+        categories=context['requested_categories']
+        portrait=path.read_bytes()==b'snow'
+        return {'match':'yes','reason':'synthetic subject evidence','scene':'synthetic',
+                'quality_issues':[],'preference_score':.5,
+                'category_matches':{c['id']:('yes' if (i==1 if portrait else i==0) else 'no') for i,c in enumerate(categories)}}
+    fake.assess=assess
+    actual=build_instruction_proposal(store,snapshot,fake)
+    assert fake.interpret_calls==[]
+    assert actual['diagnostics']['attempted']==3 and actual['diagnostics']['invalid']==0
+    assert actual['blocked'] is False
+    assert {'0','2'}<=set(actual['shortlist'])
+
+
+@pytest.mark.parametrize('text,criteria',[
+    ('uccelli, senza uccelli',[]),('preferisci uccelli, ritratti',[]),
+    ('uccelli, niente ritratti',[]),('uccelli, nessun ritratto',[]),
+    ('uccelli, mai ritratti',[]),('uccelli, evita ritratti',[]),
+    ('uccelli, almeno ritratti',[]),('uccelli, escludere ritratti',[]),
+    ('Marco Rossi, Giulia Bianchi',[]),('uccelli, ritratti a fuoco',[]),
+    ('uccelli insieme, ritratti',[]),('uccelli e persone nella stessa foto, paesaggi',[]),
+    ('uccelli, ritratti',['Solo persone nominate con identità certa']),
+])
+def test_real_constraints_and_negations_do_not_use_plain_list_shortcut(text,criteria):
+    from lrc_selection.vlm import _plain_category_interpretation
+    assert _plain_category_interpretation(text,criteria) is None
+
+
+def test_category_or_and_explicit_same_photo_are_distinct_and_validated():
+    from lrc_selection.vlm import _validate_categories, CategoryValidationError
+    red_only={'match':'yes','category_matches':{'red_circle':'yes','blue_square':'no'}}
+    _validate_categories(red_only,{'red_circle','blue_square'},'any',True)
+    with pytest.raises(CategoryValidationError,match='stessa immagine'):
+        _validate_categories(red_only,{'red_circle','blue_square'},'all')
+    with pytest.raises(CategoryValidationError,match='basta'):
+        _validate_categories(red_only|{'match':'no'},{'red_circle','blue_square'},'any',True)
+    _validate_categories({'match':'no','category_matches':red_only['category_matches']},
+                         {'red_circle','blue_square'},'all')
+
+
+def test_genuine_conflicting_rich_instruction_is_not_ignored(tmp_path):
+    store,snapshot,vlm=fixture(tmp_path)
+    snapshot['settings']['instructions']='Solo uccelli, escludi tutti gli uccelli'
+    vlm.ambiguities=['Richiesta di includere ed escludere lo stesso soggetto.']
+    result=build_instruction_proposal(store,snapshot,vlm)
+    assert result['blocked'] and result['diagnostics']['attempted']==0
+    assert result['instruction_interpretation']['ambiguities']==vlm.ambiguities
+
+
+def test_assessment_uses_originals_and_categories_without_derived_global_obligations(tmp_path):
+    from PIL import Image
+    vlm=LocalVLM.__new__(LocalVLM)
+    prompts=[]
+    def structured(prompt,image,schema,max_tokens,**kwargs):
+        prompts.append(prompt)
+        return {}
+    vlm._structured=structured
+    preview=tmp_path/'synthetic.jpg'
+    Image.new('RGB',(10,10),'white').save(preview)
+    context={'summary':'DERIVED_SUMMARY_MUST_NOT_BE_SENT',
+        'criteria':['DERIVED_RED_AND_BLUE_GLOBAL_OBLIGATION'],
+        'original_instructions':'cerchi rossi e quadrati blu',
+        'original_criteria':['USER_ORIGINAL_CRITERION'], 'original_subject_query':'',
+        'category_mode':'any','category_only':False,
+        'requested_categories':[{'id':'red','description':'cerchi rossi'},{'id':'blue','description':'quadrati blu'}]}
+    vlm.assess(preview,context)
+    assert 'DERIVED_SUMMARY_MUST_NOT_BE_SENT' not in prompts[0]
+    assert 'DERIVED_RED_AND_BLUE_GLOBAL_OBLIGATION' not in prompts[0]
+    assert 'USER_ORIGINAL_CRITERION' in prompts[0]
+    assert 'cerchi rossi e quadrati blu' in prompts[0]
+    assert context['criteria']==['DERIVED_RED_AND_BLUE_GLOBAL_OBLIGATION']  # retained trace unchanged
+
+
+def test_mistaken_or_rejection_retries_rather_than_forcing_match(tmp_path):
+    from PIL import Image
+    vlm=LocalVLM.__new__(LocalVLM)
+    data={'match':'no','reason':'blue square absent','scene':'red circle','quality_issues':[],
+          'preference_score':.5,'category_matches':{'red':'yes','blue':'no'}}
+    prompts=[]
+    def generate(prompt,image,max_tokens):
+        prompts.append(prompt)
+        return json.dumps(data)
+    vlm._generate=generate
+    path=tmp_path/'synthetic.jpg';Image.new('RGB',(10,10),'red').save(path)
+    with pytest.raises(ValueError,match='strutturata'):
+        vlm.assess(path,{'original_instructions':'cerchi, quadrati','original_criteria':[],
+            'requested_categories':[{'id':'red','description':'cerchi'},{'id':'blue','description':'quadrati'}],
+            'category_mode':'any','category_only':True})
+    assert len(prompts)==2
+    assert 'una categoria yes basta' in prompts[1]
+
+
+def test_explicit_same_image_mode_mismatch_requires_retry_without_rewriting():
+    from lrc_selection.vlm import _validate_local_interpretation, CategoryValidationError
+    value={'summary':'shapes','criteria':[],'ambiguities':[],'unsupported':[],
+        'category_mode':'any','requested_categories':[{'id':'circle','description':'cerchio'},
+        {'id':'square','description':'quadrato'}]}
+    original='Un cerchio e un quadrato presenti nella stessa immagine'
+    with pytest.raises(CategoryValidationError,match='category_mode all'):
+        _validate_local_interpretation(value,original)
+    assert value['category_mode']=='any'
+    _validate_local_interpretation(value|{'category_mode':'all'},original)
+    _validate_local_interpretation(value,'Un cerchio e un quadrato non necessariamente nella stessa immagine')
+    _validate_local_interpretation(value,'Un cerchio e un quadrato: evita che siano nella stessa immagine')
+
+
+def test_general_shape_interpretation_prompt_does_not_suggest_unrequested_subjects():
+    vlm=LocalVLM.__new__(LocalVLM)
+    prompts=[]
+    def structured(prompt,*args,**kwargs):
+        prompts.append(prompt)
+        return {'summary':'shapes','criteria':[],'ambiguities':[],'unsupported':[],
+                'requested_categories':[],'category_mode':'any'}
+    vlm._structured=structured
+    vlm.interpret('cerchi rossi e quadrati blu',[])
+    assert 'ritratt' not in prompts[0].lower()
+    assert 'uccelli' not in prompts[0].lower()
+    assert 'non elencare limiti generici' in prompts[0].lower()
+
+
+def test_negated_rich_subject_list_may_have_one_positive_category():
+    from lrc_selection.vlm import _validate_interpretation, _validate_local_interpretation
+    value={'summary':'Solo uccelli, senza ritratti','criteria':['Escludere ritratti'],
+        'ambiguities':[],'unsupported':[],'category_mode':'any','category_only':False,
+        'requested_categories':[{'id':'birds','description':'Uccelli'}]}
+    _validate_interpretation(value,'uccelli, niente ritratti')
+    _validate_local_interpretation(value,'uccelli, niente ritratti')
+    _validate_local_interpretation(value,'uccelli, escludi ritratti')

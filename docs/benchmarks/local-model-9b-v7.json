@@ -1,0 +1,124 @@
+{
+  "synthetic_only": true,
+  "photo_quality_validated": false,
+  "model_directory": "Qwen3.5-9B-MLX-4bit",
+  "runtime": "0.4.3",
+  "load_seconds": 6.403597750002518,
+  "peak_memory_bytes": 7622673506,
+  "seconds": 29.93126054102322,
+  "checks": [
+    {
+      "kind": "interpretation",
+      "instructions": "uccelli, ritratti, landscape",
+      "seconds": 0.00015129198436625302,
+      "result": {
+        "summary": "uccelli, ritratti, landscape",
+        "criteria": [],
+        "ambiguities": [],
+        "unsupported": [],
+        "requested_categories": [
+          {
+            "id": "subject_9463fb50d3c6",
+            "description": "uccelli"
+          },
+          {
+            "id": "subject_6196b0b40521",
+            "description": "Ritratti di persone"
+          },
+          {
+            "id": "subject_acb955df82b8",
+            "description": "landscape"
+          }
+        ],
+        "category_mode": "any",
+        "category_only": true
+      },
+      "passed": true
+    },
+    {
+      "kind": "interpretation",
+      "instructions": "cerchi rossi e quadrati blu",
+      "seconds": 6.6878734579950105,
+      "result": {
+        "summary": "Ricerca di fotografie contenenti cerchi rossi e quadrati blu.",
+        "criteria": [
+          "colore rosso",
+          "forma cerchio",
+          "colore blu",
+          "forma quadrato"
+        ],
+        "ambiguities": [],
+        "unsupported": [],
+        "requested_categories": [
+          {
+            "id": "cerchi_rossi",
+            "description": "Cerchi di colore rosso"
+          },
+          {
+            "id": "quadrati_blu",
+            "description": "Quadrati di colore blu"
+          }
+        ],
+        "category_mode": "any",
+        "category_only": false
+      },
+      "passed": true
+    },
+    {
+      "kind": "synthetic_image",
+      "fixture": "red_circle",
+      "seconds": 6.967303667013766,
+      "result": {
+        "match": "no",
+        "reason": "La foto contiene solo un cerchio rosso, mancando i quadrati blu richiesti.",
+        "scene": "Un cerchio rosso su sfondo bianco.",
+        "quality_issues": [
+          "Sfondo bianco non richiesto"
+        ],
+        "preference_score": 0.2,
+        "category_matches": {
+          "cerchi_rossi": "yes",
+          "quadrati_blu": "no"
+        }
+      },
+      "passed": false
+    },
+    {
+      "kind": "synthetic_image",
+      "fixture": "blue_square",
+      "seconds": 5.37371012501535,
+      "result": {
+        "match": "yes",
+        "reason": "L'immagine contiene un quadrato blu, soddisfacendo la condizione 'any' che richiede la presenza di almeno una delle categorie richieste.",
+        "scene": "Un quadrato blu su sfondo bianco.",
+        "quality_issues": [],
+        "preference_score": 0.8,
+        "category_matches": {
+          "cerchi_rossi": "no",
+          "quadrati_blu": "yes"
+        }
+      },
+      "passed": true
+    },
+    {
+      "kind": "synthetic_image",
+      "fixture": "blank",
+      "seconds": 4.489146833017003,
+      "result": {
+        "match": "no",
+        "reason": "L'immagine è completamente bianca e non contiene cerchi rossi o quadrati blu.",
+        "scene": "Sfondo bianco uniforme",
+        "quality_issues": [
+          "assenza di contenuto visivo"
+        ],
+        "preference_score": 0.0,
+        "category_matches": {
+          "cerchi_rossi": "no",
+          "quadrati_blu": "no"
+        }
+      },
+      "passed": true
+    }
+  ],
+  "passed": false
+}

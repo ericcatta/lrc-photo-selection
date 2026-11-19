@@ -212,6 +212,12 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
 
     def present(service):
         result = dict(service)
+        job = service.get('job') or {}
+        diagnostics = service.get('analysis_diagnostics') or {}
+        if (job.get('status') == 'failed' and diagnostics.get('attempted') == 0
+                and diagnostics.get('not_assessed') == len(service['photos'])
+                and (job.get('error') or '').startswith('Analisi locale incompleta: 0 risposte non valide')):
+            result['job'] = job | {'error': 'La precedente analisi si è fermata prima di valutare le foto. Avvia una nuova analisi dopo l’aggiornamento; le candidate e le decisioni salvate sono rimaste invariate.'}
         result.pop('decision_history', None)
         result.pop('append_operations', None)
         result['criteria'] = criteria_for(service['settings'])
@@ -504,18 +510,31 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
                 semantic = build_instruction_proposal(store, snapshot, instruction_model, progress)
                 diagnostics = semantic.get('diagnostics', {})
                 if semantic.get('incomplete') or diagnostics.get('invalid', 0):
+                    interpreted = semantic.get('instruction_interpretation', {})
+                    blockers = interpreted.get('ambiguities', []) + interpreted.get('unsupported', [])
+                    if semantic.get('blocked'):
+                        failure = 'Analisi non avviata: istruzioni da chiarire. ' + '; '.join(blockers)
+                        diagnostics = diagnostics | {'stage': 'instructions', 'blocking_reasons': blockers}
+                    elif diagnostics.get('invalid', 0):
+                        failure = f"Analisi locale incompleta: {diagnostics['invalid']} risposte non valide su {len(snapshot['photos'])}."
+                    elif diagnostics.get('missing_preview', 0):
+                        failure = f"Analisi locale incompleta: {diagnostics['missing_preview']} anteprime mancanti."
+                    else:
+                        failure = f"Analisi locale incompleta: {diagnostics.get('not_assessed', 0)} foto non valutate."
+                    failure += ' Nessuna nuova selezione applicata; le candidate e le decisioni salvate restano invariate.'
                     with store.transaction() as failed_db:
                         current = store.get(sid, failed_db)
                         store.check_revision(current, start_revision)
                         current['analysis_diagnostics'] = diagnostics
-                        current['interpretations'] = semantic['interpretations']
+                        current['analysis_instruction_interpretation'] = interpreted
+                        current['analysis_partial_interpretations'] = semantic['interpretations']
                         if current.get('proposal'):
                             current['proposal']['stale'] = True
                         current['requires_analysis'] = True
                         current['status'] = 'ready'
                         current['job'] = {'status': 'failed', 'completed': diagnostics.get('valid', 0),
                                           'total': len(snapshot['photos']),
-                                          'error': f"Analisi locale incompleta: {diagnostics.get('invalid', 0)} risposte non valide su {len(snapshot['photos'])}. Nessuna nuova selezione applicata. Tutte le foto restano disponibili; riprova l’analisi dopo la correzione del modello/formato."}
+                                          'error': failure}
                         current['revision'] += 1
                         store.put(failed_db, current)
                     return
@@ -549,6 +568,8 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
                 else:
                     s['proposal'] = proposal
                     s['analysis_diagnostics'] = (semantic or {}).get('diagnostics', {})
+                    s.pop('analysis_instruction_interpretation', None)
+                    s.pop('analysis_partial_interpretations', None)
                     if semantic:
                         s['interpretations'] = semantic['interpretations']
                     s.pop('requires_analysis', None)

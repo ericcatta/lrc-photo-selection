@@ -145,7 +145,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
   const groups=s.proposal?.groups??[];
   const groupMap=new Map(groups.flatMap(g=>g.members.map(id=>[id,g] as const)));
   const shortlist=new Set(s.proposal?.shortlist??[]);
-  const failedProposal=s.job?.status==='failed'&&Boolean(s.proposal?.stale);
+  const failedProposal=s.job?.status==='failed';
   const visible=s.photos.filter(p=>(failedProposal||!shortlistOnly||shortlist.has(p.id))&&(filter==='all'||decision(p).state===filter)&&(!group||groupMap.get(p.id)?.id===group));
   if(chronological)visible.sort((a,b)=>{
     const time=(p:Photo)=>p.captured_at===null?Infinity:p.captured_at+(s.settings.camera_offsets[p.camera]??0);

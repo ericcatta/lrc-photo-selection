@@ -327,3 +327,13 @@ it('mostra tutte le foto e l’errore dopo un’analisi fallita con una vecchia 
   expect(screen.queryByText('Vecchio avviso non valido')).toBeNull();
   expect(calls.some(c=>c.path.endsWith('/analyze')||c.path.endsWith('/api-confirm'))).toBe(false);
 });
+
+it('mostra l’errore iniziale senza trasformare le candidate in zero selezionate',async()=>{
+  service={...service,requires_analysis:true,job:{status:'failed',completed:0,total:2,error:'Analisi non avviata: istruzioni da chiarire.'},proposal:null};
+  await workspace();
+  expect(screen.getAllByRole('article')).toHaveLength(2);
+  expect(screen.getByText('2 foto disponibili · 2 candidate correnti')).toBeTruthy();
+  const gallery=screen.getByRole('region',{name:'Area di revisione'});
+  expect(within(gallery).getByRole('alert').textContent).toContain('Analisi non avviata');
+  expect(calls.some(c=>c.path.endsWith('/analyze')||c.path.endsWith('/api-confirm'))).toBe(false);
+});

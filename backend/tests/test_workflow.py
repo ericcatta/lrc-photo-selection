@@ -444,3 +444,53 @@ def test_invalid_local_responses_do_not_complete_a_tiny_selection(client, monkey
     assert len(result['selected_ids']) == 4
     assert result['analysis_diagnostics']['invalid'] == 3
     assert result.get('proposal') is None or result['proposal']['stale']
+
+
+def test_blocked_instructions_report_reason_without_claiming_invalid_photos(client, monkeypatch, tmp_path):
+    from lrc_selection import vlm
+    model_dir = tmp_path / 'fake-vlm'
+    model_dir.mkdir()
+    (model_dir / 'config.json').write_text('{"model_type":"synthetic"}')
+    (model_dir / 'fake.safetensors').write_text('synthetic only')
+    monkeypatch.setenv('LRC_VLM_DIR', str(model_dir))
+    monkeypatch.setattr(vlm, 'LocalVLM', lambda _: object())
+    interpretation = {'ambiguities': ['Richieste contraddittorie sul medesimo soggetto.'], 'unsupported': []}
+    monkeypatch.setattr(vlm, 'build_instruction_proposal', lambda *args: {
+        'diagnostics': {'invalid': 0, 'valid': 0, 'attempted': 0, 'total': 4, 'not_assessed': 4},
+        'interpretations': {'records': {}, 'comparisons': []},
+        'instruction_interpretation': interpretation, 'blocked': True, 'incomplete': True,
+        'shortlist': [],
+    })
+    service = configure(client, imported(client), instructions='Includi ed escludi lo stesso soggetto', service_criteria=[])
+    store = client.app.state.store
+    previous = {'records': {'u0:1': {'synthetic_previous_analysis': True}}}
+    with store.transaction() as db:
+        current = store.get(service['id'], db)
+        current['interpretations'] = previous
+        store.put(db, current)
+    result = run(client, service)
+    assert result['job']['status'] == 'failed'
+    assert 'Analisi non avviata' in result['job']['error']
+    assert interpretation['ambiguities'][0] in result['job']['error']
+    assert 'risposte non valide' not in result['job']['error']
+    assert result['analysis_diagnostics']['stage'] == 'instructions'
+    assert result['analysis_instruction_interpretation'] == interpretation
+    assert result['interpretations'] == previous
+    assert result['analysis_partial_interpretations']['records'] == {}
+    assert len(result['selected_ids']) == 4
+    assert not result['decisions']
+
+
+def test_old_zero_response_failure_is_presented_as_not_assessed(client):
+    s = imported(client)
+    store = client.app.state.store
+    with store.transaction() as db:
+        current = store.get(s['id'], db)
+        current['job'] = {'status': 'failed', 'completed': 0, 'total': 4,
+                          'error': 'Analisi locale incompleta: 0 risposte non valide su 4.'}
+        current['analysis_diagnostics'] = {'attempted': 0, 'invalid': 0, 'not_assessed': 4}
+        store.put(db, current)
+    result = detail(client)
+    assert 'prima di valutare le foto' in result['job']['error']
+    assert len(result['selected_ids']) == 4
+    assert store.get(s['id'])['job']['error'].startswith('Analisi locale incompleta: 0')
