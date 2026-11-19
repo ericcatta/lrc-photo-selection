@@ -122,6 +122,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
   const [group,setGroup]=useState('');
   const [compare,setCompare]=useState<string[]>([]);
   const [showCompare,setShowCompare]=useState(false);
+  const [viewerId,setViewerId]=useState<string|null>(null);
   const [zoom,setZoom]=useState(100);
   const [thumbnailSize,setThumbnailSize]=useState(230);
   const [plan,setPlan]=useState<Plan|null>(null);
@@ -171,6 +172,10 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
     const time=(p:Photo)=>p.captured_at===null?Infinity:p.captured_at+(s.settings.camera_offsets[p.camera]??0);
     return time(a)-time(b)||a.id.localeCompare(b.id);
   });
+  const viewerIndex=viewerId===null?-1:visible.findIndex(photo=>photo.id===viewerId);
+  const viewerPhoto=visible[viewerIndex];
+  useEffect(()=>{if(viewerId!==null&&viewerIndex<0)setViewerId(null);},[viewerId,viewerIndex]);
+  function moveViewer(offset:number){const photo=visible[viewerIndex+offset];if(photo)setViewerId(photo.id);}
   const needsUnifiedSave=Boolean((s.settings.service_criteria??s.settings.preset_snapshot?.criteria??[]).length||s.settings.subject_query);
   const draftChanged=JSON.stringify(draft)!==JSON.stringify(base)||needsUnifiedSave;
   const settingsChanged=JSON.stringify(base)!==JSON.stringify(unifiedSettings(s.settings));
@@ -224,7 +229,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
   useEffect(()=>{
     function onKey(e:KeyboardEvent) {
       const element=e.target instanceof HTMLElement?e.target:null;
-      if(e.defaultPrevented||e.repeat||element?.closest('input,textarea,select,button,[contenteditable],dialog')||showRating||showAccept||showCompare||presetEdit||coverage)return;
+      if(viewerId!==null||e.defaultPrevented||e.repeat||element?.closest('input,textarea,select,button,[contenteditable],dialog')||showRating||showAccept||showCompare||presetEdit||coverage)return;
       const key=e.key.toLowerCase();
       if((e.metaKey||e.ctrlKey)&&key==='z'&&!e.altKey){
         if(!busy&&(e.shiftKey?s.can_redo:s.can_undo)){e.preventDefault();void changeHistory(e.shiftKey?'redo':'undo');}
@@ -321,7 +326,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
             const d=cardDecision(photo);const included=selectionIds.has(photo.id);const manual=Boolean(s.decisions[photo.id]);const g=groupMap.get(photo.id);const suggestion=suggestions.get(photo.id);
             return <article className={'card state-'+d.state+(included?' selection-included':' selection-outside')+(compare.includes(photo.id)?' is-compared':'')} key={photo.id} id={'photo-'+photo.id} tabIndex={0} onFocus={()=>setFocused(photo.id)}>
               <div className="photo-topline"><span>{String(index+1).padStart(2,'0')}</span><span>{included?'Nella selezione':'Non selezionata'}{d.locked?' · Bloccata':''}</span></div>
-              <Preview service={s} photo={photo}/>
+              {photo.preview_ready?<button className="photo-preview-trigger" type="button" aria-label={'Apri anteprima '+photo.filename} onClick={event=>{event.currentTarget.focus({preventScroll:true});setViewerId(photo.id);}}><Preview service={s} photo={photo}/></button>:<Preview service={s} photo={photo}/>}
               <div className="cardbody">
                 <span className="detail-tag selection-tag">{manual?(included?'Inclusa manualmente':'Esclusa manualmente'):included?(reviewIds.has(photo.id)?'Da rivedere · inclusa nella proposta':draftSelection?'Proposta automatica':'Candidata'):'Fuori dalla selezione'}</span>
 
@@ -388,6 +393,11 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
         {phase==='outcome'&&s.receipts.length>0&&<section className="tool-section"><h2>{currentOutcome?'Esiti Lightroom':'Esiti Lightroom precedenti'}</h2>{s.receipts.map(r=><details key={r.batch_id}><summary>{r.results.filter(i=>i.status==='applied').length} stelle applicate · {r.results.length} foto verificate</summary><ul>{r.results.map(i=><li key={i.photo_id}>{photoMap.get(i.photo_id)?.filename??i.photo_id}: {({applied:'Applicata',skipped:'Saltata',conflict:'Conflitto',uncertain:'Da verificare'} as Record<string,string>)[i.status]??i.status} — {i.reason}</li>)}</ul></details>)}</section>}
       </aside>
     </div>
+    {viewerPhoto&&<Modal title="Anteprima foto" className="photo-viewer" close={()=>setViewerId(null)} onKeyDownCapture={e=>{if(e.altKey||e.ctrlKey||e.metaKey)return;if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();e.stopPropagation();moveViewer(e.key==='ArrowLeft'?-1:1);}else if(e.key==='Escape'){e.preventDefault();e.stopPropagation();setViewerId(null);}}}>
+      <p className="viewer-caption" aria-live="polite"><strong>{viewerPhoto.filename}</strong><span>{viewerIndex+1} / {visible.length}</span></p>
+      <figure className="viewer-image">{viewerPhoto.preview_ready?<img src={'/api'+photoPath(s.id,viewerPhoto.id)+'/preview'} alt={viewerPhoto.filename}/>:<span className="viewer-unavailable">Anteprima non disponibile</span>}</figure>
+      <div className="viewer-navigation"><button type="button" aria-label="Foto precedente" disabled={viewerIndex<=0} onClick={()=>moveViewer(-1)}>← Precedente</button><p className="hint">Anteprima locale · ← → per navigare · Esc per chiudere</p><button type="button" aria-label="Foto successiva" disabled={viewerIndex>=visible.length-1} onClick={()=>moveViewer(1)}>Successiva →</button></div>
+    </Modal>}
     {showCompare&&<Modal title="Confronta le anteprime" close={()=>setShowCompare(false)}><p className="hint">Zoom relativo alla vista. Le anteprime possono non bastare per valutare la nitidezza dell’originale.</p><label>Zoom {zoom}%<input type="range" min={100} max={300} step={10} value={zoom} onChange={e=>setZoom(e.target.valueAsNumber)}/></label><label className="check"><input type="checkbox" checked={linked} onChange={e=>{mirrored.current=null;setLinked(e.target.checked);}}/>Collega scorrimento</label><div className="comparison" ref={comparison}>{compare.map(id=>{const p=photoMap.get(id);return p&&<ComparisonPhoto key={id} service={s} photo={p} zoom={zoom} onScroll={mirrorScroll}/>;})}</div></Modal>}
     {showAccept&&<Modal title="Usa la proposta come selezione" close={()=>setShowAccept(false)}><p>Conferma {shortlist.size} foto nella selezione, comprese le tue modifiche manuali. Le altre restano accessibili tra le escluse dalla proposta; le decisioni manuali precedenti prevalgono.</p><p className="warning">Può lasciare situazioni senza candidate: verifica prima di confermare.</p><p>Nessuna stella viene applicata. La scelta può essere annullata dal provino.</p><button className="primary" disabled={busy||draftChanged||s.proposal?.stale||!shortlist.size} onClick={()=>void action(async()=>{update(await api<Service>(path+'/accept-shortlist','POST',{revision:s.revision,confirm_last:true}));setShowAccept(false);navigate('lightroom');})}>Conferma candidate</button>{error&&<p role="alert" className="warning">{error}</p>}</Modal>}
     {showRating&&<Modal title="Rivedi le stelle" close={()=>setShowRating(false)}><p>{selectedIds.size} candidate su {s.photos.length} foto. {s.proposal?'La proposta include le decisioni manuali.':'Selezione manuale, nessuna analisi eseguita.'}</p><p>Il plugin può assegnare una stella alle candidate idonee con zero stelle. Prima dell’applicazione occorre verificare che la scrittura automatica dei metadati su file sia disabilitata.</p>{plan?<><p role="status"><strong>{plan.items.length} modifiche proposte</strong> · revisione {plan.revision}</p><p>{selectedIds.size} candidate: {plan.items.length} nuove stelle. Le valutazioni già presenti vengono preservate.</p>{plan.items.length===0&&<p>Nessuna modifica necessaria: nessuna nuova stella da assegnare. Puoi usare “Mostra le candidate in Lightroom” per ritrovare la selezione.</p>}{plan.warnings.map((w,i)=><p className="warning" key={i}>{w}</p>)}{plan.items.length>0&&<><p>Conferma questo elenco e apri “Applica stelle” nel plugin. Controlla la scrittura automatica dei metadati e conferma in Lightroom.</p><ul className="planlist">{plan.items.map(i=><li key={i.photo_id}>{i.filename??photoMap.get(i.photo_id)?.filename??i.photo_id} · ID {i.local_id} · {i.expected_rating} → 1 ★</li>)}</ul>{planReceived?<p role="status">Operazione registrata. Consulta Esiti Lightroom.</p>:plan.revision!==s.revision?<p role="alert">Piano superato. Chiudi e prepara una nuova anteprima.</p>:confirmed?<div role="status"><p>Piano confermato · {plan.batch_id}</p><ol><li>Chiudi questa finestra e torna in Lightroom.</li><li>Apri Libreria → Extra plug-in → Applica stelle.</li><li>Verifica XMP, spunta l’attestazione nel plugin e conferma l’elenco.</li></ol></div>:<button className="primary" disabled={busy||draftChanged} onClick={()=>void action(async()=>{await api(path+'/rating-plan/confirm','POST',{batch_id:plan.batch_id});update(await api<Service>(path));})}>Conferma elenco per Lightroom</button>}</>}</>:<button className="primary" disabled={busy} onClick={()=>void action(async()=>setPlan(await api<Plan>(path+'/rating-plan','POST',{revision:s.revision})))}>Prepara anteprima delle modifiche</button>}{error&&<p role="alert" className="warning">{error}</p>}</Modal>}
@@ -415,10 +425,10 @@ function ComparisonPhoto({service,photo,zoom,onScroll}:{service:Service;photo:Ph
 function validFace(face:Face) {
   return [face.x,face.y,face.width,face.height].every(Number.isFinite)&&face.x>=0&&face.y>=0&&face.width>0&&face.height>0&&face.x+face.width<=1.001&&face.y+face.height<=1.001;
 }
-function Modal({title,close,children}:{title:string;close:()=>void;children:React.ReactNode}) {
+function Modal({title,close,children,className,onKeyDownCapture}:{title:string;close:()=>void;children:React.ReactNode;className?:string;onKeyDownCapture?:React.KeyboardEventHandler<HTMLDialogElement>}) {
   const [dialog,setDialog]=useState<HTMLDialogElement|null>(null);
-  useEffect(()=>{if(dialog&&!dialog.open)dialog.showModal();},[dialog]);
-  return <dialog ref={setDialog} onCancel={e=>{e.preventDefault();close();}} aria-label={title}><header className="reviewhead"><h2>{title}</h2><button onClick={close}>Chiudi</button></header>{children}</dialog>;
+  useEffect(()=>{if(!dialog)return;const opener=document.activeElement instanceof HTMLElement?document.activeElement:null;if(!dialog.open)dialog.showModal();return()=>{if(opener?.isConnected)opener.focus({preventScroll:true});};},[dialog]);
+  return <dialog ref={setDialog} className={className} onKeyDownCapture={onKeyDownCapture} onCancel={e=>{e.preventDefault();close();}} aria-label={title}><header className="reviewhead"><h2>{title}</h2><button onClick={close}>Chiudi</button></header>{children}</dialog>;
 }
 const root = document.getElementById('root');
 if (root) createRoot(root).render(<App/>);

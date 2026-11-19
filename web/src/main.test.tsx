@@ -501,3 +501,62 @@ it('rende visibile il motivo di un’analisi bloccata e offre la correzione dei 
   await waitFor(()=>expect(calls.some(x=>x.path.endsWith('/api-status'))).toBe(true));
   expect(calls.some(x=>x.path.endsWith('/analyze')||x.path.endsWith('/api-confirm'))).toBe(false);
 });
+
+it('apre l’anteprima grande, naviga alle estremità e chiude restituendo il focus senza decisioni',async()=>{
+  service={...service,photos:service.photos.map(photo=>({...photo,preview_ready:true}))};
+  await workspace();
+  const opener=screen.getByRole('button',{name:'Apri anteprima sintetica-0.jpg'});
+  act(()=>opener.focus());
+  fireEvent.click(opener);
+  const dialog=await screen.findByRole('dialog',{name:'Anteprima foto'});
+  expect(within(dialog).getByRole('img',{name:'sintetica-0.jpg'}).getAttribute('src')).toBe('/api/services/synthetic/photos/p0/preview');
+  expect(within(dialog).getByText('1 / 2')).toBeTruthy();
+  expect((within(dialog).getByRole('button',{name:'Foto precedente'}) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(within(dialog).getByRole('button',{name:'Foto successiva'}));
+  expect(within(dialog).getByRole('img',{name:'sintetica-1.jpg'})).toBeTruthy();
+  expect(within(dialog).getByText('2 / 2')).toBeTruthy();
+  expect((within(dialog).getByRole('button',{name:'Foto successiva'}) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.keyDown(dialog,{key:'ArrowLeft'});
+  expect(within(dialog).getByRole('img',{name:'sintetica-0.jpg'})).toBeTruthy();
+  fireEvent.keyDown(dialog,{key:'x'});
+  fireEvent.keyDown(document.body,{key:'m'});
+  expect(calls.some(call=>call.method!=='GET')).toBe(false);
+  fireEvent.keyDown(dialog,{key:'Escape'});
+  expect(screen.queryByRole('dialog',{name:'Anteprima foto'})).toBeNull();
+  expect(document.activeElement).toBe(opener);
+});
+it('naviga soltanto le foto visibili rispettando filtri e ordine cronologico',async()=>{
+  const template=service.photos[0];
+  service={...service,workflow:workflow('review'),photos:[30,10,20].map((time,index)=>({...template,id:'p'+index,uuid:'u'+index,local_id:index,filename:'ordine-'+index+'.jpg',captured_at:time,preview_ready:true})),proposal:{selected:['p0','p1','p2'],shortlist:['p0','p2'],groups:[],reasons:{},warnings:[],engine:'synthetic'}};
+  await workspace();
+  fireEvent.click(screen.getByRole('checkbox',{name:'Ordine cronologico'}));
+  const articles=screen.getAllByRole('article');
+  expect(within(articles[0]).getByRole('button',{name:'Apri anteprima ordine-2.jpg'})).toBeTruthy();
+  fireEvent.click(within(articles[0]).getByRole('button',{name:'Apri anteprima ordine-2.jpg'}));
+  const dialog=await screen.findByRole('dialog',{name:'Anteprima foto'});
+  expect(within(dialog).getByRole('img',{name:'ordine-2.jpg'})).toBeTruthy();
+  fireEvent.keyDown(within(dialog).getByRole('button',{name:'Foto successiva'}),{key:'ArrowRight'});
+  expect(within(dialog).getByRole('img',{name:'ordine-0.jpg'})).toBeTruthy();
+  expect(within(dialog).queryByRole('img',{name:'ordine-1.jpg'})).toBeNull();
+  expect(within(dialog).getByText('2 / 2')).toBeTruthy();
+  expect(calls.some(call=>call.method!=='GET')).toBe(false);
+});
+it('lascia i controlli delle schede separati dall’apertura dell’anteprima',async()=>{
+  service={...service,photos:service.photos.map(photo=>({...photo,preview_ready:true}))};
+  await workspace();
+  fireEvent.click(screen.getAllByRole('checkbox',{name:'Confronta'})[0]);
+  expect(screen.queryByRole('dialog',{name:'Anteprima foto'})).toBeNull();
+  expect(calls.some(call=>call.method!=='GET')).toBe(false);
+});
+
+it('mostra un messaggio quando la navigazione raggiunge una foto senza anteprima',async()=>{
+  service={...service,photos:service.photos.map((photo,index)=>({...photo,preview_ready:index===0}))};
+  await workspace();
+  fireEvent.click(screen.getByRole('button',{name:'Apri anteprima sintetica-0.jpg'}));
+  const dialog=await screen.findByRole('dialog',{name:'Anteprima foto'});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Foto successiva'}));
+  expect(within(dialog).getByText('sintetica-1.jpg')).toBeTruthy();
+  expect(within(dialog).getByText('Anteprima non disponibile')).toBeTruthy();
+  expect(within(dialog).queryByRole('img')).toBeNull();
+  expect(calls.some(call=>call.method!=='GET')).toBe(false);
+});

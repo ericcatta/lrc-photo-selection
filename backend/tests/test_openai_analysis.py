@@ -211,7 +211,7 @@ def test_usage_missing_keeps_reserve_and_no_match_never_fills(client):
     assert client.get('/api/services/test-service').json()['proposal']['shortlist'] == []
 
 
-def test_pricing_expiry_blocks_estimates_and_confirmations(client, monkeypatch):
+def test_pricing_expiry_requires_unpriced_estimate_and_blocks_old_confirmation(client, monkeypatch):
     from datetime import date
     runner, service = setup(client)
     plan = estimate(client, service).json()
@@ -221,7 +221,8 @@ def test_pricing_expiry_blocks_estimates_and_confirmations(client, monkeypatch):
             return cls(2027, 2, 1)
     monkeypatch.setattr(api_module, 'date', FutureDate)
     runner.transport = lambda *_: pytest.fail('Expired pricing must not send')
-    assert estimate(client, service).status_code == 409
+    unpriced = estimate(client, service).json()
+    assert unpriced['pricing_known'] is False and unpriced['estimated_cost_usd'] is None
     assert confirm(client, plan).status_code == 409
 
 
@@ -654,3 +655,58 @@ def test_old_interpretation_estimate_requires_new_confirmation_before_network(cl
     runner.transport = lambda *_: pytest.fail('Old estimate must not transmit')
     response = confirm(client, plan)
     assert response.status_code == 409 and 'nuova stima' in response.json()['detail']
+
+
+def test_unpriced_analysis_requires_specific_confirmation_and_preserves_budget(client):
+    runner, service = setup(client)
+    # Store an existing budget, then choose an account model with unknown rates.
+    estimate(client, service, budget=.25).raise_for_status()
+    client.app.state.openai_config.path.write_text(json.dumps({'model': 'gpt-6.1-terra'}))
+    plan = estimate(client, service, budget=None).json()
+    assert plan['pricing_known'] is False
+    assert plan['estimated_cost_usd'] is None and plan['reserve_usd'] is None and plan['guard_usd'] is None
+    assert plan['budget_usd'] == .25 and plan['can_confirm']
+    runner.transport = lambda *_: pytest.fail('No explicit unpriced authorization')
+    response = confirm(client, plan)
+    assert response.status_code == 409 and 'costo non stimabile' in response.json()['detail']
+    calls = []
+    runner.transport = lambda payload, key: calls.append(payload) or reply(payload)
+    confirm(client, plan, allow_unpriced=True).raise_for_status()
+    status = wait(client)
+    assert status['job']['status'] == 'completed'
+    assert status['budget_usd'] == .25
+    assert status['unknown_cost_calls'] == len(calls) == 4
+    assert not status['pricing_complete']
+    assert status['usage']['input_tokens'] == 800
+    assert all(receipt['cost_usd'] is None and receipt['pricing_unknown'] for receipt in status['receipts'])
+    assert all(payload['reasoning']['effort'] == 'low' for payload in calls)
+
+
+def test_known_62_pricing_and_reasoning_apply_to_all_phases(client):
+    runner, service = setup(client)
+    client.app.state.openai_config.path.write_text(json.dumps({'model': 'gpt-6.2-sol'}))
+    plan = estimate(client, service, budget=10).json()
+    assert plan['pricing_known'] and plan['pricing']['input_per_million'] == 2
+    assert plan['estimated_cost_usd'] > 0 and plan['reserve_usd'] > 0
+    calls = []
+    runner.transport = lambda payload, key: calls.append(payload) or reply(payload)
+    confirm(client, plan).raise_for_status()
+    status = wait(client)
+    assert status['job']['status'] == 'completed'
+    assert status['pricing_complete'] and status['unknown_cost_calls'] == 0
+    assert all(payload['reasoning'] == {'effort': 'low'} and payload['max_output_tokens'] >= 2400 for payload in calls)
+    assert api_module._cost(300000, 1000, runner.pricing('gpt-6.2-sol')) == 1215000
+
+
+def test_unpriced_network_failure_remains_unknown_in_ledger(client):
+    runner, service = setup(client)
+    client.app.state.openai_config.path.write_text(json.dumps({'model': 'gpt-4.1-mini'}))
+    plan = estimate(client, service).json()
+    def timeout(*args):
+        raise TimeoutError('synthetic')
+    runner.transport = timeout
+    confirm(client, plan, allow_unpriced=True).raise_for_status()
+    status = wait(client)
+    assert status['job']['status'] == 'paused'
+    assert status['unknown_cost_calls'] == 1 and not status['pricing_complete']
+    assert status['receipts'][0]['cost_usd'] is None

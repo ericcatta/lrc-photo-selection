@@ -211,3 +211,56 @@ it('keeps confirmation open when the server rejects the send',async()=>{
   expect(screen.getByRole('dialog')).toBeTruthy();
   expect(started).not.toHaveBeenCalled();
 });
+
+it('confirms an unpriced model only with explicit unpriced acknowledgement and preserves the saved budget',async()=>{
+  const originalFetch=globalThis.fetch;
+  vi.stubGlobal('fetch',vi.fn(async(url:string,init?:RequestInit)=>{
+    const result=await originalFetch(url,init);
+    if(url.endsWith('/api-status'))return response({...initial,budget_usd:1,remaining_usd:1});
+    if(!url.endsWith('/api-estimate'))return result;
+    const plan=await result.json();
+    return response({...plan,model:'gpt-6.2',pricing_known:false,pricing:{input_per_million:null,output_per_million:null,source:null,verified_at:null},estimated_cost_usd:null,reserve_usd:null,guard_usd:null,budget_usd:1,can_confirm:true});
+  }));
+  render(<APIReview service={service} dirty={false} disabled={false} update={vi.fn()}/>);
+  fireEvent.click(screen.getByRole('button',{name:'Stima e rivedi invio a OpenAI'}));
+  await waitFor(()=>expect((screen.getByLabelText('Budget complessivo del servizio (USD)') as HTMLInputElement).value).toBe('1'));
+  fireEvent.click(screen.getByRole('button',{name:'Calcola stima senza inviare foto'}));
+  await screen.findByText('Costo non disponibile per questo modello.');
+  const summary=screen.getByRole('heading',{name:'Riepilogo da confermare'}).closest('section')!;
+  expect(summary.textContent).not.toContain('Stima: USD 0');
+  expect(summary.textContent).not.toContain('Limite autorizzato per questo invio:');
+  expect(screen.getByText(/Il budget del servizio/).textContent).toContain('resta salvato');
+  const acknowledgement=screen.getByLabelText('Confermo l’invio a OpenAI di queste anteprime con il mio testo originale, senza stima dei costi né limite di spesa verificabile nell’app.');
+  expect((screen.getByRole('button',{name:'Conferma e invia a OpenAI'}) as HTMLButtonElement).disabled).toBe(true);
+  expect(calls.some(c=>c.url.endsWith('/api-confirm'))).toBe(false);
+  fireEvent.click(acknowledgement);
+  fireEvent.click(screen.getByRole('button',{name:'Conferma e invia a OpenAI'}));
+  await waitFor(()=>expect(calls.some(c=>c.url.endsWith('/api-confirm'))).toBe(true));
+  expect(calls.find(c=>c.url.endsWith('/api-confirm'))?.body).toEqual({plan_id:'plan-1',confirm:true,allow_unpriced:true});
+  expect(calls.find(c=>c.url.endsWith('/api-estimate'))?.body?.budget_usd).toBe(1);
+});
+it('labels incomplete cost accounting without displaying a false available budget',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async()=>response({...initial,pricing_complete:false,unknown_cost_calls:2,budget_usd:1,remaining_usd:1,receipts:[{request_id:'unpriced',plan_id:'plan',response_id:'r',model:'gpt-6.2',usage:{input_tokens:20,output_tokens:10},cost_usd:null,reserved_usd:0,pricing_unknown:true}]})));
+  render(<APIReview service={service} dirty={false} disabled={false} update={vi.fn()}/>);
+  fireEvent.click(screen.getByRole('button',{name:'Stima e rivedi invio a OpenAI'}));
+  await screen.findByText(/2 richieste senza tariffa disponibile/);
+  expect(screen.getByText(/Consumo con tariffa nota/).textContent).toContain('Residuo non verificabile');
+  expect(screen.queryByText(/Disponibile nel budget/)).toBeNull();
+  expect(screen.getByText(/Tariffa non disponibile, costo non calcolato/)).toBeTruthy();
+});
+
+it('keeps the total-budget uncertainty visible when a priced estimate follows unpriced requests',async()=>{
+  const originalFetch=globalThis.fetch;
+  vi.stubGlobal('fetch',vi.fn(async(url:string,init?:RequestInit)=>{
+    const result=await originalFetch(url,init);
+    if(!url.endsWith('/api-estimate'))return result;
+    return response({...await result.json(),pricing_known:true,pricing_complete:false,unknown_cost_calls:1});
+  }));
+  render(<APIReview service={service} dirty={false} disabled={false} update={vi.fn()}/>);
+  fireEvent.click(screen.getByRole('button',{name:'Stima e rivedi invio a OpenAI'}));
+  await waitFor(()=>expect((screen.getByRole('button',{name:'Calcola stima senza inviare foto'}) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole('button',{name:'Calcola stima senza inviare foto'}));
+  await screen.findByText(/La stima e il limite prudenziale riguardano questo invio/);
+  expect(screen.getByLabelText('Confermo l’invio a OpenAI di queste anteprime con il mio testo originale e il limite di costo indicato.')).toBeTruthy();
+  expect(calls.some(call=>call.url.endsWith('/api-confirm'))).toBe(false);
+});

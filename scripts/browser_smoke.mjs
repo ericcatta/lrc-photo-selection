@@ -41,6 +41,19 @@ try {
   const click=async text=>{const found=await evaluate(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b||b.disabled)return false;b.click();return true;})()`);if(!found)throw new Error('Button unavailable: '+text);};
   const step=async name=>{const found=await evaluate(`(()=>{const b=[...document.querySelectorAll('.workflow-panel nav button')].find(b=>b.textContent.endsWith(${JSON.stringify(name)}));if(!b)return false;b.click();return true;})()`);if(!found)throw new Error('Workflow step unavailable: '+name);await waitFor(`document.querySelector('.workflow-next h2')?.textContent===${JSON.stringify(name)}`);};
   const request=async(path,method='GET',body)=>await evaluate(`fetch('/api'+${JSON.stringify(path)},{method:${JSON.stringify(method)},headers:{'Content-Type':'application/json'},body:${JSON.stringify(body===undefined?undefined:JSON.stringify(body))}}).then(async r=>({status:r.status,data:await r.json()}))`);
+  // Large preview uses only the existing synthetic preview endpoint.
+  await evaluate("document.querySelector('.photo-preview-trigger').focus();document.querySelector('.photo-preview-trigger').click()");
+  await waitFor("Boolean(document.querySelector('dialog.photo-viewer[open]'))");
+  const firstViewer=await evaluate("document.querySelector('dialog.photo-viewer img')?.getAttribute('src')");
+  await call('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});
+  await call('Input.dispatchKeyEvent',{type:'keyUp',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});
+  await waitFor(`document.querySelector('dialog.photo-viewer img')?.getAttribute('src')!==${JSON.stringify(firstViewer)}`);
+  const viewerImage=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
+  await writeFile('.build/photo-viewer.png',Buffer.from(viewerImage.data,'base64'));
+  await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  await waitFor("!document.querySelector('dialog[open]')");
+  await waitFor("document.activeElement?.classList.contains('photo-preview-trigger')");
   await evaluate("(()=>{const select=document.querySelector('.card select');select.value='preferred';select.dispatchEvent(new Event('change',{bubbles:true}));})()");
   await waitFor("[...document.querySelectorAll('button')].some(b=>b.textContent==='Annulla decisione'&&!b.disabled)");
   await click('Annulla decisione');

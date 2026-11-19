@@ -194,3 +194,30 @@ riapertura dettagli, zero invii reali, modifica della quantità senza nuove chia
 proposta vuota con tutte le sei fixture visibili, inclusione/esclusione manuale
 con conferma di copertura e accettazione esatta di una foto. Nessun overflow a
 390 pixel. Verificata visivamente la distinzione selezionata/non selezionata.
+
+### 2026-11-19 — Anteprima navigabile e catalogo API esteso
+
+Click sull’anteprima apre un dialogo grande nello stile esistente; frecce,
+Precedente/Successiva ed Esc funzionano sul sottoinsieme e nell’ordine del provino.
+Il focus torna alla foto iniziale. Nessuna decisione viene modificata aprendo o
+navigando il visualizzatore; le anteprime mancanti hanno un messaggio dedicato.
+
+Il catalogo API distingue modelli verificati, famiglie candidate e modelli
+incompatibili. Le famiglie candidate sono selezionabili senza tariffa; un invio
+senza prezzo richiede un consenso esplicito distinto nel payload. Budget salvato
+preservato, ricevute monetarie sconosciute nulle e consumi parziali dichiarati.
+I parametri di ragionamento sono adattati alle famiglie. Nessun cambio automatico
+del modello e nessuna inferenza per aggiornare la lista.
+
+205 test backend superati (1 helper Apple Vision escluso), 61 test frontend e
+build riusciti. Smoke Chrome headless con fixture sintetiche superato, inclusi
+navigazione foto, Escape, ritorno focus, flusso stelle simulato e viewport mobile.
+Ispezionata l’anteprima grande sintetica. Aggiornato realmente solo `/v1/models`:
+l’account espone GPT-6.2 Sol e Astra. Le risposte di analisi dei nuovi modelli sono
+state simulate nei test; qualità visiva e compatibilità effettiva delle famiglie
+non verificate richiedono un invio esplicitamente confermato dall’utente.
+
+Backend riavviato dopo verifica di entrambi i servizi inattivi. La lettura finale
+mostra 44 identificativi compatibili o candidati disponibili (incluse snapshot),
+GPT-6.2 Sol/Astra disponibili e modello scelto ancora GPT-5.4 mini. Nessuna
+modifica ai risultati o alle selezioni esistenti.

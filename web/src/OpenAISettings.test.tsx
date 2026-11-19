@@ -43,13 +43,13 @@ it('checks model availability only on explicit click and keeps unavailable model
   expect((screen.getByRole('button',{name:'Salva configurazione'}) as HTMLButtonElement).disabled).toBe(true);
 });
 
-it('shows discovered new models without enabling unverified pricing',async()=>{
+it('keeps incompatible discovered models visible but disabled',async()=>{
   vi.stubGlobal('fetch',vi.fn(async(url:string)=>new Response(JSON.stringify(url.endsWith('/config')?{model:'',key_configured:true}:{models:[{id:'future-model',label:'future-model',supported:false,available:true,input_per_million:null,output_per_million:null}],checked_at:'2026-11-18',stale:false}),{headers:{'Content-Type':'application/json'}})));
   render(<OpenAISettings/>);
   fireEvent.click(screen.getByRole('button',{name:'Configurazione OpenAI'}));
   const option=await screen.findByRole('option',{name:'future-model'});
   expect((option as HTMLOptionElement).disabled).toBe(true);
-  expect(screen.getByRole('group',{name:'Altri modelli · compatibilità e tariffa da verificare'})).toBeTruthy();
+  expect(screen.getByRole('group',{name:'Modelli non compatibili con l’analisi fotografica'})).toBeTruthy();
 });
 it('allows replacing a key despite stale unavailability and reloads the local model list',async()=>{
   const calls:{url:string;method:string}[]=[];
@@ -70,4 +70,29 @@ it('allows replacing a key despite stale unavailability and reloads the local mo
   expect((screen.getByLabelText('Chiave API') as HTMLInputElement).value).toBe('');
   expect(calls.filter(c=>c.url==='/api/openai/models')).toHaveLength(2);
   expect(calls.some(c=>c.url.endsWith('/refresh'))).toBe(false);
+});
+
+it('allows a compatible model without known pricing and keeps the current model until explicitly changed',async()=>{
+  const calls:{url:string;body?:Record<string,unknown>}[]=[];
+  vi.stubGlobal('fetch',vi.fn(async(url:string,init?:RequestInit)=>{
+    const body=init?.body?JSON.parse(String(init.body)):undefined;calls.push({url,body});
+    const data=url==='/api/openai/config'?{model:body?.model??'mini',key_configured:true,configured:true}:{models:[
+      {id:'mini',label:'Mini',supported:true,available:true,pricing_known:true,input_per_million:.75,output_per_million:4.5,compatibility:'verified'},
+      {id:'gpt-6.2',label:'GPT-6.2',supported:true,available:true,pricing_known:false,input_per_million:null,output_per_million:null,compatibility:'family',compatibility_note:'Supporto famiglia GPT.'}
+    ],checked_at:'2026-11-19',stale:false};
+    return new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json'}});
+  }));
+  render(<OpenAISettings/>);
+  fireEvent.click(screen.getByRole('button',{name:'Configurazione OpenAI'}));
+  const option=await screen.findByRole('option',{name:'GPT-6.2 · disponibile · costo non disponibile'});
+  expect((option as HTMLOptionElement).disabled).toBe(false);
+  expect((screen.getByLabelText('Modello API') as HTMLSelectElement).value).toBe('mini');
+  fireEvent.change(screen.getByLabelText('Modello API'),{target:{value:'gpt-6.2'}});
+  expect(screen.getByText(/Costo non disponibile per questo modello/)).toBeTruthy();
+  expect(screen.getByText(/Compatibilità dedotta dalla famiglia/)).toBeTruthy();
+  expect((screen.getByRole('button',{name:'Salva configurazione'}) as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(screen.getByRole('button',{name:'Salva configurazione'}));
+  await screen.findByRole('status');
+  expect(calls.find(c=>c.body)?.body).toEqual({model:'gpt-6.2'});
+  expect(calls.every(c=>['/api/openai/config','/api/openai/models'].includes(c.url))).toBe(true);
 });

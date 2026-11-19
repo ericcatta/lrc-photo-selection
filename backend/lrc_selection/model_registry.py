@@ -1,6 +1,7 @@
 """Reviewed vision models/pricing; account discovery never sends photographs."""
 import json
 import os
+import re
 import ssl
 import certifi
 import urllib.request
@@ -20,14 +21,39 @@ MODEL_SPECS = {
         'source': 'https://developers.openai.com/api/docs/models/gpt-5.4', 'verified_at': '2026-11-18',
     },
 }
+MODEL_SPECS.update({
+    'gpt-5.3-codex': {'id': 'gpt-5.3-codex', 'label': 'GPT-5.3 Codex', 'input_per_million': 1.75, 'output_per_million': 14., 'source': 'https://developers.openai.com/api/docs/models/gpt-5.3-codex', 'verified_at': '2026-11-19'},
+    'gpt-6.2-sol': {'id': 'gpt-6.2-sol', 'label': 'GPT-6.2 Sol', 'input_per_million': 2., 'output_per_million': 10., 'source': 'https://developers.openai.com/api/docs/models/gpt-6.2-sol', 'verified_at': '2026-11-19'},
+    'gpt-6.2-astra': {'id': 'gpt-6.2-astra', 'label': 'GPT-6.2 Astra', 'input_per_million': 8., 'output_per_million': 40., 'source': 'https://developers.openai.com/api/docs/models/gpt-6.2-astra', 'verified_at': '2026-11-19'},
+})
 ALIASES = {'gpt-5.4-mini': 'gpt-5.4-mini-2026-03-17', 'gpt-5.4': 'gpt-5.4-2026-03-05'}
+
+
+def compatible_family(model):
+    """Candidate image/Responses families; discovery is not a capability proof."""
+    if any(part in model for part in ('audio', 'realtime', 'transcribe', 'tts', 'embedding', 'image', 'search', 'instruct', 'moderation', 'chat-latest')):
+        return False
+    if model.startswith(('gpt-5.4-pro', 'o1-mini', 'o1-preview', 'gpt-4o-2024-05-13')):
+        return False
+    return bool(re.fullmatch(r'(?:gpt-(?:4o|4\.1|[56](?:\.\d+)?)(?:-[a-z0-9]+)*|o[134](?:-[a-z0-9]+)*)', model))
 
 
 def lookup_model(model):
     canonical = ALIASES.get(model, model)
-    if canonical not in MODEL_SPECS:
-        raise ValueError('Modello non supportato o tariffa non verificata. Scegli un modello dalla lista.')
-    return dict(MODEL_SPECS[canonical])
+    if canonical in MODEL_SPECS:
+        return dict(MODEL_SPECS[canonical], pricing_known=True, compatibility='verified', **({'long_context_threshold': 272000, 'long_context_input_multiplier': 2., 'long_context_output_multiplier': 1.5} if canonical.startswith('gpt-6.2') else {}))
+    if not compatible_family(canonical):
+        raise ValueError('Modello non compatibile con l’analisi fotografica. Scegli un modello dalla lista.')
+    return {'id': canonical, 'label': canonical, 'input_per_million': None, 'output_per_million': None,
+            'source': None, 'verified_at': None, 'pricing_known': False, 'compatibility': 'family'}
+
+
+def request_parameters(model):
+    if model.startswith('gpt-6') or model.startswith('gpt-5.3-codex'):
+        return {'reasoning': {'effort': 'low'}}
+    if model.startswith('gpt-5.4'):
+        return {'reasoning': {'effort': 'none'}}
+    return {}
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -56,16 +82,21 @@ class ModelCatalog:
     def read(self):
         cached = json.loads(self.path.read_text()) if self.path.exists() else None
         available = set(cached['ids']) if cached else None
-        models = [dict(spec, supported=True, available=(spec['id'] in available if available is not None else None))
-                  for spec in MODEL_SPECS.values()]
-        if available is not None:
-            for model in sorted(available.difference(MODEL_SPECS).difference(ALIASES)):
+        ids = set(MODEL_SPECS) | (available or set())
+        models = []
+        for model in sorted(ids.difference(ALIASES)):
+            try:
+                spec = lookup_model(model)
+                models.append(dict(spec, supported=True, available=(model in available if available is not None else None),
+                                   compatibility_note=('Compatibilità verificata; accesso dipende dall’account.' if spec['compatibility'] == 'verified' else 'Famiglia candidata: compatibilità effettiva verificata solo al primo invio confermato. Tariffa non disponibile.')))
+            except ValueError:
                 models.append({'id': model, 'label': model, 'available': True, 'supported': False,
-                               'input_per_million': None, 'output_per_million': None})
+                               'input_per_million': None, 'output_per_million': None, 'pricing_known': False,
+                               'compatibility': 'unsupported', 'compatibility_note': 'Modello non adatto alle immagini o al formato richiesto.'})
         checked_at = cached['checked_at'] if cached else None
         stale = not checked_at or (datetime.now(timezone.utc) - datetime.fromisoformat(checked_at)).total_seconds() > 86400
         return {'models': models, 'checked_at': checked_at, 'stale': stale,
-                'note': 'Elenco disponibile dall’account, aggiornabile da OpenAI. I modelli nuovi/altri richiedono verifica di compatibilità e tariffa prima dell’analisi. Nessuna sostituzione automatica del modello scelto.'}
+                'note': 'Elenco aggiornabile dall’account OpenAI. Le famiglie fotografiche compatibili sono utilizzabili anche senza tariffa, con conferma esplicita del costo non stimabile. Nessuna sostituzione automatica del modello scelto.'}
 
     def refresh(self):
         try:

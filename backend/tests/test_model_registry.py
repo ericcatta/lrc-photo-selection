@@ -51,3 +51,26 @@ def test_discovery_errors_do_not_expose_credentials(tmp_path):
     with pytest.raises(HTTPException) as exc: catalog.refresh()
     assert 'synthetic-only-key' not in str(exc.value.detail)
     with pytest.raises(RuntimeError): NoRedirect().redirect_request(None,None,302,'',{},'https://example.com')
+
+
+def test_account_vision_families_are_usable_without_invented_tariffs(tmp_path):
+    catalog = ModelCatalog(tmp_path, OpenAIConfig(tmp_path, Keys()))
+    catalog.transport = lambda key: {'gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-terra', 'gpt-5.6-luna', 'gpt-4.1-mini', 'o3', 'gpt-audio', 'text-embedding-3-small', 'gpt-4o-realtime-preview', 'gpt-image-1', 'gpt-5.4-pro'}
+    models = {model['id']: model for model in catalog.refresh()['models']}
+    assert models['gpt-6.2-sol']['supported'] and models['gpt-6.2-sol']['input_per_million'] == 2
+    assert models['gpt-6.2-astra']['output_per_million'] == 40
+    for name in ['gpt-6.1-terra', 'gpt-5.6-luna', 'gpt-4.1-mini', 'o3']:
+        assert models[name]['supported'] and models[name]['available']
+        assert models[name]['pricing_known'] is False and models[name]['input_per_million'] is None
+        assert models[name]['compatibility'] == 'family'
+    for name in ['gpt-audio', 'text-embedding-3-small', 'gpt-4o-realtime-preview', 'gpt-image-1', 'gpt-5.4-pro']:
+        assert not models[name]['supported']
+
+
+def test_parameters_respect_model_family():
+    from lrc_selection.model_registry import request_parameters
+    assert request_parameters('gpt-6.2-sol') == {'reasoning': {'effort': 'low'}}
+    assert request_parameters('gpt-6.2-astra') == {'reasoning': {'effort': 'low'}}
+    assert request_parameters('gpt-5.3-codex') == {'reasoning': {'effort': 'low'}}
+    assert request_parameters('gpt-5.4-mini-2026-03-17') == {'reasoning': {'effort': 'none'}}
+    assert request_parameters('gpt-4.1-mini') == {}
