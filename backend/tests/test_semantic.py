@@ -204,3 +204,37 @@ def test_technical_annotations_cannot_replace_last_requested_portrait(tmp_path):
     second=rerank_instruction_shortlist(result,snapshot,store,encoder)
     assert second['shortlist']==first['shortlist']
     assert all(category['status']=='represented' for category in second['coverage'])
+
+
+def test_local_uncertainty_retention_survives_siglip_rerank_without_fabricating_coverage(tmp_path):
+    from lrc_selection.semantic import rerank_instruction_shortlist, LOCAL_UNCERTAINTY_POLICY
+    store,snapshot,encoder=fixture(tmp_path)
+    snapshot['settings']['target']=1
+    result=instruction_result(matches=('0','1'))
+    result['method']['uncertainty_policy']=LOCAL_UNCERTAINTY_POLICY
+    result['instruction_interpretation']={'requested_categories':[{'id':'subject','description':'Subject'}]}
+    for pid,a in result['assessments'].items():
+        a['category_matches']={'subject':'yes'}
+    result['assessments']['2']['match']='uncertain'
+    result['assessments']['3'].update(match='uncertain',error='Risposta non valida')
+    result['review_ids']=['2','3']
+    result['shortlist']=['0','2','3']
+    result['shortlist_reasons']={'2':'Da rivedere: synthetic uncertainty','3':'Da rivedere: synthetic error'}
+    ranked=rerank_instruction_shortlist(result,snapshot,store,encoder)
+    assert ranked['shortlist']==['0','2','3'] and ranked['review_ids']==['2','3']
+    assert ranked['coverage'][0]['selected_ids']==['0']
+    assert ranked['shortlist_reasons']['2']=='Da rivedere: synthetic uncertainty'
+    assert len(encoder.image_calls)==2  # review-only images never treated as ranking evidence
+    snapshot['decisions']={'2':{'state':'excluded','locked':True},'3':{'state':'alternative','locked':True}}
+    ranked=rerank_instruction_shortlist(result,snapshot,store,encoder)
+    assert ranked['shortlist']==['0'] and ranked['review_ids']==[]
+
+
+def test_shared_api_category_selector_keeps_existing_unknown_behavior():
+    from lrc_selection.semantic import select_with_category_coverage
+    assessments={'yes':{'match':'yes','category_matches':{'subject':'yes'}},
+                 'unknown':{'match':'uncertain','category_matches':{'subject':'uncertain'}}}
+    result=select_with_category_coverage(['yes','unknown'],[],assessments,
+                                        [{'id':'subject','description':'Subject'}],2)
+    assert result['shortlist']==['yes']
+    assert 'review_ids' not in result

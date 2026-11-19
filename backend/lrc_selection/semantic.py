@@ -115,11 +115,13 @@ def rerank_instruction_shortlist(result, snapshot, store, encoder):
         return updated
     decisions = snapshot.get('decisions', {})
     assessments = result.get('assessments', {})
+    local_policy = result.get('method', {}).get('uncertainty_policy') == LOCAL_UNCERTAINTY_POLICY
+    local_review = set(retain_local_review_candidates([], snapshot, assessments)['review_ids']) if local_policy else set()
     eligible = [p for p in snapshot['photos']
                 if decisions.get(p['id'], {}).get('state') not in {'excluded', 'alternative'}]
-    forced = [p['id'] for p in eligible if decisions.get(p['id'], {}).get('state') in SELECTED]
+    forced = [p['id'] for p in eligible if decisions.get(p['id'], {}).get('state') in SELECTED and p['id'] not in local_review]
     matches = [p['id'] for p in eligible if assessments.get(p['id'], {}).get('match') == 'yes'
-               and p['id'] not in forced]
+               and p['id'] not in forced and p['id'] not in local_review]
     vectors = {}
     cache = FeatureCache(store.root)
     needed = set(forced + matches)
@@ -158,15 +160,23 @@ def rerank_instruction_shortlist(result, snapshot, store, encoder):
         selected.append(chosen)
         remaining.remove(chosen)
         ranking_evidence[chosen] = evaluated[chosen]
+    coverage_assessments = local_confirmed_coverage_assessments(assessments) if local_policy else assessments
     covered = select_with_category_coverage([pid for pid in selected if pid not in forced], forced,
-                                             assessments, categories, snapshot['settings']['target'])
+                                             coverage_assessments, categories, snapshot['settings']['target'])
     selected = covered['shortlist']
+    if local_policy:
+        retained = retain_local_review_candidates(selected, snapshot, assessments)
+        selected = retained['shortlist']
+        updated['review_ids'] = retained['review_ids']
+        updated.setdefault('warnings', []).extend(w for w in retained['warnings'] if w not in updated.get('warnings', []))
     updated['shortlist'] = selected
     updated['coverage'] = covered['coverage']
     updated.setdefault('warnings', []).extend(w for w in covered['warnings'] if w not in updated.get('warnings', []))
     reasons = {}
     for pid in selected:
-        if pid in forced:
+        if pid in local_review:
+            reasons[pid] = result.get('shortlist_reasons', {}).get(pid, 'Da rivedere, conservata per prudenza: ' + assessments.get(pid, {}).get('reason', 'Valutazione non disponibile.'))
+        elif pid in forced:
             reasons[pid] = 'Decisione manuale preservata.'
         else:
             reasons[pid] = assessments[pid]['reason'] + ' Diversità visiva considerata nella proposta (confronto di embedding, equivalenza non dimostrata).'
@@ -240,3 +250,45 @@ def select_with_category_coverage(ordered_ids, forced_ids, assessments, categori
     if len(selected) > target:
         warnings.append('Quantità indicativa superata per preservare categorie richieste e decisioni manuali: rivedere il compromesso prima di confermare.')
     return {'shortlist': selected, 'coverage': coverage, 'warnings': warnings}
+
+
+LOCAL_UNCERTAINTY_POLICY = 'retain-uncertain-v1'
+
+
+def local_confirmed_coverage_assessments(assessments):
+    """Unknown/error photos remain review candidates, never confirmed coverage.
+
+    This local-only view leaves original model assessments unchanged and does not
+    change the shared API category selector's behavior.
+    """
+    result = {}
+    for pid, assessment in assessments.items():
+        if assessment.get('match') != 'yes' or assessment.get('error'):
+            result[pid] = dict(assessment, category_matches={
+                cid: 'uncertain' if match == 'yes' else match
+                for cid, match in assessment.get('category_matches', {}).items()})
+        else:
+            result[pid] = assessment
+    return result
+
+
+def retain_local_review_candidates(shortlist, snapshot, assessments):
+    """Append every eligible unknown after the normal confirmed proposal.
+
+    These additions do not fill the confirmed target or establish category
+    coverage. Explicit manual exclusions/alternatives always prevail.
+    """
+    photos = {photo['id']: photo for photo in snapshot['photos']}
+    eligible = [pid for pid in photos
+                if snapshot.get('decisions', {}).get(pid, {}).get('state') not in {'excluded', 'alternative'}]
+    eligible_set = set(eligible)
+    selected = list(dict.fromkeys(pid for pid in shortlist if pid in eligible_set))
+    review_ids = [pid for pid in eligible if photos[pid].get('preview_ready') is False or not assessments.get(pid)
+                  or assessments[pid].get('match') == 'uncertain' or assessments[pid].get('error')]
+    selected.extend(pid for pid in review_ids if pid not in selected)
+    warnings = []
+    if review_ids:
+        warnings.append(f'{len(review_ids)} immagini incerte o non valutabili conservate nella proposta come da rivedere; non sono corrispondenze confermate.')
+        if len(selected) > snapshot['settings']['target']:
+            warnings.append('Quantità indicativa superata per conservare tutte le immagini da rivedere, oltre alle candidate confermate.')
+    return {'shortlist': selected, 'review_ids': review_ids, 'warnings': warnings}

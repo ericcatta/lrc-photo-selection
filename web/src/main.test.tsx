@@ -337,3 +337,14 @@ it('mostra l’errore iniziale senza trasformare le candidate in zero selezionat
   expect(within(gallery).getByRole('alert').textContent).toContain('Analisi non avviata');
   expect(calls.some(c=>c.path.endsWith('/analyze')||c.path.endsWith('/api-confirm'))).toBe(false);
 });
+
+it('include le incerte nella proposta e nel filtro da rivedere senza applicare decisioni',async()=>{
+  service={...service,job:{status:'completed_with_warnings',completed:2,total:2,error:null},proposal:{selected:['p0','p1'],shortlist:['p0','p1'],review_ids:['p1'],shortlist_reasons:{p1:'Risposta non valida: conservata per revisione.'},groups:[],reasons:{},warnings:['Una foto conservata per revisione.'],engine:'synthetic'}};
+  await workspace();
+  expect(screen.getAllByRole('article')).toHaveLength(2);
+  expect(screen.getByText('Da rivedere · inclusa nella proposta')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Stato'),{target:{value:'review'}});
+  expect(screen.getAllByRole('article')).toHaveLength(1);
+  expect(screen.getByText('sintetica-1.jpg')).toBeTruthy();
+  expect(calls.some(c=>c.method!=='GET')).toBe(false);
+});

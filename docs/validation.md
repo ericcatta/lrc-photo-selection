@@ -104,3 +104,15 @@ Correzione v9: parser conservativo solo per elenchi di singole parole minuscole,
 I fallimenti ora indicano la causa e mantengono separati risultati parziali e interpretazioni precedenti. L'interfaccia mostra le candidate salvate anche quando il primo tentativo fallisce; corregge in lettura il vecchio messaggio «0 risposte non valide», senza riscrivere il servizio.
 
 Verifica reale del modello su sole figure sintetiche: 11/11 controlli superati, 61,05 secondi, picco MLX circa 7,71 GB. Report [v9](benchmarks/local-model-9b-v9.json); i tentativi falliti v7/v8 restano tracciati. Riproducibile con scripts/check_local_model.py. Questi controlli non validano il merito fotografico o l'affidabilità generale delle istruzioni. Nessuna nuova analisi delle foto dell'utente, richiesta API o modifica di stelle.
+
+## 19 novembre — Conservare risultati incerti e recuperare una lettura parziale
+
+Ultimo tentativo Campione di prova: 160 immagini processate, 143 risposte positive, 14 negative, una incerta valida e due risposte non valide (schema/categorie). La precedente regola bloccava la proposta per quei due errori. Il proprietario ha precisato che gli esiti incerti devono essere inclusi.
+
+Politica locale `retain-uncertain-v1`: proposta ordinaria con copertura delle categorie confermate, poi aggiunta di tutte le immagini incerte, con risposta non valida, anteprima mancante o valutazione non disponibile, salvo esclusioni/alternative manuali. Queste immagini hanno indicazione da rivedere e non provano copertura. La conservazione sopravvive al riordinamento SigLIP, può superare il target, e non cambia né i giudizi originali né la selezione API condivisa. Nessuna modifica a prompt/modelli o invalidazione delle risposte valide in cache. Errori per foto non bloccano più l'intero servizio; ambiguità bloccanti della richiesta e errori globali restano fallimenti espliciti.
+
+L'accettazione manuale della proposta conserva lo stato da rivedere per queste immagini, senza sovrascrivere decisioni precedenti. Prima dell'accettazione rimane una proposta separata.
+
+Recupero preparato dai 160 risultati salvati: 15 proposte ordinarie più 3 da rivedere, senza nuove inferenze, letture di immagini, chiamate API o stelle. Verificati revisione del servizio, testo originale, criteri, identità e hash delle anteprime nei metadati prima di scrivere. Il recupero usa la classifica per preferenze/scene già valutate, senza ricalcolare embedding.
+
+Recupero applicato alla sola proposta locale (revisione 179 → 180): 18 proposte, di cui 3 da rivedere; decisioni e stelle non modificate. Verifica: 172 test backend superati (uno Apple Vision escluso), 36 frontend superati e build riuscita.

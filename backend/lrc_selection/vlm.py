@@ -287,12 +287,7 @@ def build_instruction_proposal(store, snapshot, vlm, progress=None):
                           original_subject_query=subject_query)
     blocked = bool(interpretation['ambiguities'] or interpretation['unsupported'])
     records, assessments = {}, {}
-    warnings = ['Valutazioni del modello locale da verificare: non garantiscono copertura, identità o assenza di soggetti.']
-    if blocked:
-        warnings.append('Istruzioni da chiarire: ambiguità o criteri non verificabili. Nessuna selezione automatica applicata.')
-        warnings.extend('Ambiguità: ' + item for item in interpretation['ambiguities'])
-        warnings.extend('Criterio non verificabile: ' + item for item in interpretation['unsupported'])
-    else:
+    if not blocked:
         assessment_identity = {'model': vlm.identity, 'interpretation': interpretation, 'prompt': PROMPT_REVISION}
         for index, photo in enumerate(snapshot['photos']):
             pid = photo['id']
@@ -320,10 +315,29 @@ def build_instruction_proposal(store, snapshot, vlm, progress=None):
             if progress:
                 progress(index + 1, len(snapshot['photos']))
 
+    return proposal_from_assessments(snapshot, interpretation, assessments, vlm.identity, records)
+
+
+def proposal_from_assessments(snapshot, interpretation, assessments, model, records):
+    """Build a local review proposal from existing evidence, without I/O or models."""
+    from copy import deepcopy
+    interpretation, assessments, records = deepcopy((interpretation, assessments, records))
+    if set(assessments) - {photo['id'] for photo in snapshot['photos']}:
+        raise ValueError('Valutazioni associate a fotografie esterne al servizio')
+    settings = snapshot['settings']
+    instructions = settings.get('instructions', '')
+    blocked = bool(interpretation.get('ambiguities') or interpretation.get('unsupported'))
+    warnings = ['Valutazioni del modello locale da verificare: non garantiscono copertura, identità o assenza di soggetti.']
+    if blocked:
+        warnings.append('Istruzioni da chiarire: ambiguità o criteri non verificabili. Nessuna selezione automatica applicata.')
+        warnings.extend('Ambiguità: ' + item for item in interpretation['ambiguities'])
+        warnings.extend('Criterio non verificabile: ' + item for item in interpretation['unsupported'])
+    from .semantic import retain_local_review_candidates
+    local_review = set(retain_local_review_candidates([], snapshot, assessments)['review_ids']) if not blocked else set()
     decisions = snapshot.get('decisions', {})
     eligible = [p['id'] for p in snapshot['photos'] if decisions.get(p['id'], {}).get('state') not in {'excluded', 'alternative'}]
-    shortlist = [pid for pid in eligible if decisions.get(pid, {}).get('state') in SELECTED]
-    matches = [pid for pid in eligible if assessments.get(pid, {}).get('match') == 'yes' and pid not in shortlist]
+    shortlist = [pid for pid in eligible if decisions.get(pid, {}).get('state') in SELECTED and pid not in local_review]
+    matches = [] if blocked else [pid for pid in eligible if assessments.get(pid, {}).get('match') == 'yes' and pid not in shortlist and pid not in local_review]
     # Rank preferences inside tentative scene labels, then alternate scene heads.
     # These labels only diversify the review list; they are not equivalence groups.
     scenes = {}
@@ -340,11 +354,18 @@ def build_instruction_proposal(store, snapshot, vlm, progress=None):
             if not scenes[scene]:
                 del scenes[scene]
     target = settings['target']
-    from .semantic import select_with_category_coverage
-    coverage_result = select_with_category_coverage(ordered, shortlist, assessments,
+    from .semantic import (select_with_category_coverage, local_confirmed_coverage_assessments,
+                           retain_local_review_candidates, LOCAL_UNCERTAINTY_POLICY)
+    coverage_result = select_with_category_coverage(ordered, shortlist, local_confirmed_coverage_assessments(assessments),
                                                      interpretation['requested_categories'], target)
     shortlist = coverage_result['shortlist']
     warnings.extend(coverage_result['warnings'])
+    confirmed_count = len(shortlist)
+    retained = ({'shortlist': shortlist, 'review_ids': [], 'warnings': []} if blocked else
+                retain_local_review_candidates(shortlist, snapshot, assessments))
+    shortlist = retained['shortlist']
+    review_ids = retained['review_ids']
+    warnings.extend(retained['warnings'])
     if not blocked and not any(a['match'] == 'yes' for a in assessments.values()):
         if assessments and all(a['match'] == 'no' for a in assessments.values()):
             warnings.append('Nessuna corrispondenza rilevata nelle anteprime analizzate; non è prova che il soggetto sia assente. Nessuna immagine sostitutiva aggiunta.')
@@ -352,10 +373,10 @@ def build_instruction_proposal(store, snapshot, vlm, progress=None):
             warnings.append('Analisi non disponibile per tutte le anteprime: mancano anteprime o risposte valide. Non è possibile verificare le corrispondenze.')
         else:
             warnings.append('Corrispondenze non confermate: sono presenti valutazioni incerte da rivedere. Non è possibile concludere che il soggetto sia assente.')
-    if len(shortlist) < target:
-        warnings.append('Quantità non raggiunta: non aggiunte immagini non corrispondenti o incerte per riempire la proposta.')
-    if len(shortlist) > target:
-        warnings.append('Le decisioni manuali superano la quantità richiesta: tutte conservate.')
+    if confirmed_count < target:
+        warnings.append('Quantità di corrispondenze confermate non raggiunta: le immagini incerte restano da rivedere, senza dichiararle corrispondenti.')
+    if confirmed_count > target:
+        warnings.append('Quantità indicativa superata per conservare categorie richieste o decisioni manuali.')
     invalid = sum(bool(a.get('error')) and a['error'] != 'Anteprima mancante' for a in assessments.values())
     missing = sum(a.get('error') == 'Anteprima mancante' for a in assessments.values())
     diagnostics = {'total': len(snapshot['photos']), 'attempted': len(assessments) - missing,
@@ -366,17 +387,21 @@ def build_instruction_proposal(store, snapshot, vlm, progress=None):
                    'uncertain': sum(a['match'] == 'uncertain' for a in assessments.values())}
     diagnostics['error_counts'] = {kind: sum(a.get('error_kind') == kind for a in assessments.values())
                                    for kind in sorted({a['error_kind'] for a in assessments.values() if a.get('error_kind')})}
-    incomplete = bool(blocked or invalid or missing or diagnostics['not_assessed'])
+    partial = bool(invalid or missing or diagnostics['not_assessed'] or diagnostics['uncertain'])
+    incomplete = bool(blocked)
+    diagnostics.update(partial=partial, review_retained=len(review_ids), confirmed_proposal=confirmed_count)
     if invalid:
-        warnings.append(f'{invalid} risposte locali non valide: analisi incompleta, nessuna conclusione negativa ricavata da questi errori.')
+        warnings.append(f'{invalid} risposte locali non valide: risultati parziali, immagini conservate da rivedere senza ricavarne esclusioni.')
     reasons = {pid: ('Decisione manuale preservata.' if decisions.get(pid, {}).get('state') in SELECTED
-                     else assessments[pid]['reason']) for pid in shortlist}
-    return {'interpretations': {'schema_version': 1, 'model': vlm.identity, 'records': records,
+                     else ('Da rivedere, conservata per prudenza: ' + assessments.get(pid, {}).get('reason', 'Valutazione non disponibile.') if pid in review_ids
+                           else assessments[pid]['reason'])) for pid in shortlist}
+    return {'interpretations': {'schema_version': 1, 'model': model, 'records': records,
                                 'comparisons': [], 'warning': warnings[0]},
-            'shortlist': shortlist, 'shortlist_reasons': reasons, 'query_scores': {},
-            'model': vlm.identity, 'query': instructions, 'warnings': warnings,
+            'shortlist': shortlist, 'review_ids': review_ids, 'shortlist_reasons': reasons, 'query_scores': {},
+            'model': model, 'query': instructions, 'warnings': warnings,
             'method': {'name': PROMPT_REVISION, 'calibrated': False, 'changes_candidate_decisions': False,
                        'ranking': 'preference-score-then-scene-round-robin',
-                       'preference_score_kind': 'user-preferences-and-photographic-merit-ordinal-not-probability'},
+                       'preference_score_kind': 'user-preferences-and-photographic-merit-ordinal-not-probability',
+                       'uncertainty_policy': LOCAL_UNCERTAINTY_POLICY},
             'instruction_interpretation': interpretation, 'assessments': assessments,
-            'blocked': blocked, 'coverage': coverage_result['coverage'], 'diagnostics': diagnostics, 'incomplete': incomplete}
+            'blocked': blocked, 'coverage': coverage_result['coverage'], 'diagnostics': diagnostics, 'incomplete': incomplete, 'partial': partial}

@@ -423,27 +423,45 @@ def test_review_shortlist_does_not_warn_about_unaccepted_candidate_count(client)
     assert result['proposal']['warnings'] == ['Copertura categoria ritratti da verificare.']
 
 
-def test_invalid_local_responses_do_not_complete_a_tiny_selection(client, monkeypatch, tmp_path):
+def test_invalid_local_responses_are_retained_for_review_without_failing_batch(client, monkeypatch, tmp_path):
     from lrc_selection import vlm
     model_dir = tmp_path / 'fake-vlm'
     model_dir.mkdir()
     (model_dir / 'config.json').write_text('{"model_type":"synthetic"}')
     (model_dir / 'fake.safetensors').write_text('synthetic only')
     monkeypatch.setenv('LRC_VLM_DIR', str(model_dir))
-    monkeypatch.setattr(vlm, 'LocalVLM', lambda _: object())
-    monkeypatch.setattr(vlm, 'build_instruction_proposal', lambda *args: {
-        'diagnostics': {'invalid': 3, 'valid': 1, 'total': 4},
-        'interpretations': {'records': {}, 'comparisons': []},
-        'shortlist': ['u0:1'],
-    })
-    service = configure(client, imported(client), instructions='uccelli, ritratti, landscape', service_criteria=[], target=3)
+    class FakeVLM:
+        identity = {'test': 'partial-synthetic'}
+        calls = 0
+        def assess(self, path, interpretation):
+            self.calls += 1
+            if self.calls > 1:
+                raise ValueError('Synthetic malformed response')
+            return {'match': 'yes', 'reason': 'Synthetic positive', 'scene': 'synthetic',
+                    'quality_issues': [], 'preference_score': .8,
+                    'category_matches': {c['id']: 'yes' for c in interpretation['requested_categories']}}
+    monkeypatch.setattr(vlm, 'LocalVLM', lambda _: FakeVLM())
+    service = client.post('/api/imports', json=manifest()).json()
+    for photo, color in zip(service['photos'], ['red', 'green', 'blue', 'white']):
+        assert client.put(f"/api/services/{service['id']}/photos/{photo['id']}/preview", content=jpeg(color),
+                          headers={'Content-Type': 'image/jpeg'}).status_code == 200
+    assert client.post(f"/api/services/{service['id']}/complete").status_code == 200
+    service = configure(client, detail(client), instructions='uccelli, ritratti, landscape', service_criteria=[], target=3)
     result = run(client, service)
-    assert result['job']['status'] == 'failed'
-    assert '3 risposte non valide su 4' in result['job']['error']
-    assert result['requires_analysis']
+    assert result['job']['status'] == 'completed_with_warnings'
+    assert result['job']['error'] is None
+    assert not result.get('requires_analysis')
     assert len(result['selected_ids']) == 4
     assert result['analysis_diagnostics']['invalid'] == 3
-    assert result.get('proposal') is None or result['proposal']['stale']
+    assert len(result['proposal']['shortlist']) == 4
+    assert len(result['proposal']['review_ids']) == 3
+    assert result['decisions'] == {}
+    accepted = client.post(f"/api/services/{service['id']}/accept-shortlist", json={
+        'revision': result['revision'], 'confirm_last': True}).json()
+    assert len(accepted['selected_ids']) == 4
+    for pid in result['proposal']['review_ids']:
+        assert accepted['decisions'][pid]['state'] == 'review'
+    assert accepted['receipts'] == []
 
 
 def test_blocked_instructions_report_reason_without_claiming_invalid_photos(client, monkeypatch, tmp_path):

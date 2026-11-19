@@ -137,7 +137,8 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
   },[path,polling,s.revision,s.status,update]);
   const busy=pending||running(s)||!!s.archived||s.status!=='ready';
   const proposed=new Set([...(s.proposal?.selected??[]),...(s.proposal?.added_candidates??[])]);
-  const decision=(p:Photo)=>s.decisions[p.id]??{state:s.proposal&&!proposed.has(p.id)?'alternative' as const:'candidate' as const,locked:false};
+  const reviewIds=new Set(s.proposal?.stale?[]:s.proposal?.review_ids??[]);
+  const decision=(p:Photo)=>s.decisions[p.id]??{state:reviewIds.has(p.id)?'review' as const:s.proposal&&!proposed.has(p.id)?'alternative' as const:'candidate' as const,locked:false};
   const selectedIds=new Set(s.selected_ids??s.photos.filter(p=>['candidate','preferred','review'].includes(decision(p).state)).map(p=>p.id));
   const cameras=[...new Set(s.photos.map(p=>p.camera).filter(Boolean))];
   const photoMap=new Map(s.photos.map(p=>[p.id,p]));
@@ -274,7 +275,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
               <div className="photo-topline"><span>{String(index+1).padStart(2,'0')}</span><span>{labels[d.state]}{d.locked?' · Bloccata':''}</span></div>
               <Preview service={s} photo={photo}/>
               <div className="cardbody">
-                {shortlist.has(photo.id)&&<span className="detail-tag">Nella proposta</span>}
+                {shortlist.has(photo.id)&&<span className="detail-tag">{reviewIds.has(photo.id)?'Da rivedere · inclusa nella proposta':'Nella proposta'}</span>}
                 {s.proposal?.shortlist_reasons?.[photo.id]&&<p className="hint">{s.proposal.shortlist_reasons[photo.id]}</p>}
                 <strong className="filename" title={photo.filename}>{photo.filename}</strong>
                 <div className="photo-meta"><span title={photo.camera}>{photo.camera||'Fotocamera non indicata'}</span><span className="stars" aria-label={photo.baseline_rating+' stelle all’importazione'} title="Valutazione all’importazione">{'★'.repeat(photo.baseline_rating)}{'☆'.repeat(5-photo.baseline_rating)}</span></div>
@@ -332,7 +333,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
         {draft.mode==='hybrid'&&<APIReview service={s} dirty={draftChanged} disabled={busy} update={update}/>}
         {s.criteria.length>0&&<details className="tool-section disclosure criteria-status"><summary>Stato dei criteri<span className="detail-tag">{s.criteria.filter(c=>c.status!=='supported').length} da verificare</span></summary><ul>{s.criteria.map((c,i)=><li key={i}><strong>{c.text}</strong><span className="criterion-status">{({partial:'Parzialmente supportato',unsupported:'Non applicato',supported:'Supportato',pending:'Da analizzare',ambiguous:'Ambiguo'} as Record<string,string>)[c.status]??c.status}</span><p>{c.reason}</p></li>)}</ul></details>}
         {features&&<section className="tool-section"><button disabled={busy} onClick={()=>void action(async()=>update(await api<Service>(path+'/features','POST',{revision:s.revision})))}>Analizza dettagli locali</button></section>}
-        {s.job&&<section className="tool-section job-status" aria-live="polite"><h2>Analisi locale</h2><p>{({running:'In corso',queued:'In coda',completed:'Completata',interrupted:'Interrotta',failed:'Non riuscita'} as Record<string,string>)[s.job.status]??s.job.status} · {s.job.completed} / {s.job.total}</p>{s.job.status==='running'&&<progress value={s.job.completed} max={s.job.total||1}/>} {s.job.error&&<p className="warning">{s.job.error}</p>}</section>}
+        {s.job&&<section className="tool-section job-status" aria-live="polite"><h2>Analisi locale</h2><p>{({running:'In corso',queued:'In coda',completed:'Completata',completed_with_warnings:'Completata · casi da rivedere',interrupted:'Interrotta',failed:'Non riuscita'} as Record<string,string>)[s.job.status]??s.job.status} · {s.job.completed} / {s.job.total}</p>{s.job.status==='running'&&<progress value={s.job.completed} max={s.job.total||1}/>} {s.job.error&&<p className="warning">{s.job.error}</p>}</section>}
         {s.receipts.length>0&&<section className="tool-section"><h2>Esiti Lightroom</h2>{s.receipts.map(r=><details key={r.batch_id}><summary>{r.results.filter(i=>i.status==='applied').length} stelle applicate · {r.results.length} foto verificate</summary><ul>{r.results.map(i=><li key={i.photo_id}>{photoMap.get(i.photo_id)?.filename??i.photo_id}: {({applied:'Applicata',skipped:'Saltata',conflict:'Conflitto',uncertain:'Da verificare'} as Record<string,string>)[i.status]??i.status} — {i.reason}</li>)}</ul></details>)}</section>}
       </aside>
     </div>

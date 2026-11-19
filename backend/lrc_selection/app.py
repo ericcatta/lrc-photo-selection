@@ -432,9 +432,10 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
             if 'shortlist' not in proposal or proposal.get('stale') or not body.confirm_last:
                 raise HTTPException(409, 'Rivedere e confermare una proposta aggiornata prima di applicarla')
             selected = set(proposal['shortlist'])
+            review = set(proposal.get('review_ids', []))
             if not selected:
                 raise HTTPException(409, 'Nessuna corrispondenza proposta: nessuna decisione modificata')
-            changes = {p['id']: {'state': 'candidate' if p['id'] in selected else 'excluded', 'locked': False}
+            changes = {p['id']: {'state': ('review' if p['id'] in review else 'candidate') if p['id'] in selected else 'excluded', 'locked': False}
                        for p in s['photos'] if p['id'] not in s['decisions']}
             record_decisions(s, changes)
             s['proposal']['shortlist_accepted'] = True
@@ -509,7 +510,7 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
                     instruction_model = LocalVLM(vlm_path)
                 semantic = build_instruction_proposal(store, snapshot, instruction_model, progress)
                 diagnostics = semantic.get('diagnostics', {})
-                if semantic.get('incomplete') or diagnostics.get('invalid', 0):
+                if semantic.get('blocked') or semantic.get('incomplete'):
                     interpreted = semantic.get('instruction_interpretation', {})
                     blockers = interpreted.get('ambiguities', []) + interpreted.get('unsupported', [])
                     if semantic.get('blocked'):
@@ -557,6 +558,7 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
                 raise ValueError('Modello semantico locale non configurato')
             if semantic is not None:
                 proposal.update({k: semantic[k] for k in ('shortlist', 'shortlist_reasons', 'query_scores')})
+                proposal['review_ids'] = semantic.get('review_ids', [])
                 proposal['semantic'] = {k: semantic[k] for k in ('model', 'query', 'method')}
                 proposal['warnings'] = semantic['warnings']
                 if 'instruction_interpretation' in semantic:
@@ -573,7 +575,8 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
                     if semantic:
                         s['interpretations'] = semantic['interpretations']
                     s.pop('requires_analysis', None)
-                    s['job'] = {'status': 'completed', 'completed': len(s['photos']), 'total': len(s['photos']), 'error': None}
+                    s['job'] = {'status': 'completed_with_warnings' if semantic and semantic.get('review_ids') else 'completed',
+                                'completed': len(s['photos']), 'total': len(s['photos']), 'error': None}
                 s['status'] = 'ready'
                 s['revision'] += 1
                 store.put(db, s)

@@ -83,10 +83,12 @@ def test_failed_output_uncertain_not_cached_and_missing_preview(tmp_path):
     result=build_instruction_proposal(store,snapshot,vlm)
     assert len(result['assessments'])==3
     assert all(a['match']=='uncertain' for a in result['assessments'].values())
-    assert result['shortlist']==[]
+    assert result['shortlist']==['0','1','2']
+    assert result['review_ids']==['0','1','2']
     vlm.fail=False
     result=build_instruction_proposal(store,snapshot,vlm)
-    assert result['shortlist']==['1']
+    assert result['shortlist']==['1','0']
+    assert result['review_ids']==['0']
     assert len(vlm.assess_calls)==4
 
 
@@ -175,7 +177,8 @@ def test_invalid_preference_score_is_uncertain_not_ranked(tmp_path,score):
     store,snapshot,vlm=fixture(tmp_path)
     vlm.assess=lambda *args:{'match':'yes','reason':'synthetic','scene':'synthetic','quality_issues':[],'preference_score':score,'category_matches':{}}
     result=build_instruction_proposal(store,snapshot,vlm)
-    assert result['shortlist']==[]
+    assert result['shortlist']==['0','1','2']
+    assert result['review_ids']==['0','1','2']
     assert all(a['match']=='uncertain' for a in result['assessments'].values())
 
 
@@ -206,7 +209,8 @@ def test_missing_category_response_fails_to_uncertain(tmp_path):
     vlm.interpret=lambda *args:{'summary':'birds','criteria':[],'ambiguities':[],'unsupported':[],'category_mode':'any',
         'requested_categories':[{'id':'birds','description':'Uccelli'}]}
     result=build_instruction_proposal(store,snapshot,vlm)
-    assert result['shortlist']==[]
+    assert result['shortlist']==['0','1','2']
+    assert result['review_ids']==['0','1','2']
     assert all(a['match']=='uncertain' for a in result['assessments'].values())
     assert result['coverage'][0]['status']=='uncertain'
 
@@ -297,11 +301,13 @@ def test_diagnostics_mark_invalid_and_missing_as_incomplete_then_retry(tmp_path)
     snapshot['photos'][0]['preview_ready']=False
     vlm.fail=True
     failed=build_instruction_proposal(store,snapshot,vlm)
-    assert failed['incomplete'] is True
+    assert failed['incomplete'] is False
+    assert failed['partial'] is True
+    assert failed['review_ids']==['0','1','2']
     assert failed['diagnostics']=={'total':3,'attempted':2,'valid':0,'invalid':2,
         'missing_preview':1,'missing':1,'not_assessed':0,'yes':0,'no':0,'uncertain':3,
-        'error_counts':{'schema':2}}
-    assert any('analisi incompleta' in warning for warning in failed['warnings'])
+        'error_counts':{'schema':2},'partial':True,'review_retained':3,'confirmed_proposal':0}
+    assert any('risultati parziali' in warning for warning in failed['warnings'])
     vlm.fail=False
     recovered=build_instruction_proposal(store,snapshot,vlm)
     assert recovered['diagnostics']['invalid']==0
@@ -465,3 +471,61 @@ def test_negated_rich_subject_list_may_have_one_positive_category():
     _validate_interpretation(value,'uccelli, niente ritratti')
     _validate_local_interpretation(value,'uccelli, niente ritratti')
     _validate_local_interpretation(value,'uccelli, escludi ritratti')
+
+
+def test_pure_recovery_retains_all_unknowns_after_confirmed_target_without_model(monkeypatch):
+    from lrc_selection.vlm import proposal_from_assessments
+    snapshot={'id':'synthetic-recovery','photos':[{'id':str(i),'preview_ready':i!=5} for i in range(6)],
+              'settings':{'target':1,'instructions':'synthetic original'},'decisions':{}}
+    interpretation={'requested_categories':[{'id':'subject','description':'Requested subject'}],
+                    'ambiguities':[],'unsupported':[],'original_instructions':'synthetic original'}
+    def assessment(match, **extra):
+        return {'match':match,'reason':'synthetic evidence','scene':'synthetic','preference_score':.5,
+                'category_matches':{'subject':'yes'},'quality_issues':[]}|extra
+    assessments={'0':assessment('yes'),'1':assessment('yes'),'2':assessment('no'),
+                 '3':assessment('uncertain'),'4':assessment('uncertain',error='Risposta non valida',error_kind='schema'),
+                 '5':assessment('uncertain',error='Anteprima mancante')}
+    records={pid:{'assessment':value} for pid,value in assessments.items()}
+    before=copy.deepcopy((snapshot,interpretation,assessments,records))
+    monkeypatch.setattr(LocalVLM,'__init__',lambda *args:pytest.fail('Recovery must not instantiate a model'))
+    recovered=proposal_from_assessments(snapshot,interpretation,assessments,{'adapter':'stored-synthetic'},records)
+    assert recovered['shortlist']==['0','3','4','5']
+    assert recovered['review_ids']==['3','4','5']
+    assert recovered['partial'] and not recovered['incomplete']
+    assert recovered['diagnostics']['confirmed_proposal']==1
+    assert recovered['diagnostics']['invalid']==1 and recovered['diagnostics']['missing_preview']==1
+    assert recovered['diagnostics']['yes']==2  # no fabricated conversion of unknowns
+    assert recovered['coverage'][0]['selected_ids']==['0']
+    assert all('Da rivedere' in recovered['shortlist_reasons'][pid] for pid in recovered['review_ids'])
+    assert (snapshot,interpretation,assessments,records)==before
+
+
+def test_all_uncertain_included_above_target_without_confirmed_coverage():
+    from lrc_selection.vlm import proposal_from_assessments
+    snapshot={'photos':[{'id':str(i),'preview_ready':True} for i in range(3)],
+              'settings':{'target':1,'instructions':'subject'},'decisions':{}}
+    interpretation={'requested_categories':[{'id':'subject','description':'Subject'}], 'ambiguities':[],'unsupported':[]}
+    assessments={str(i):{'match':'uncertain','reason':'uncertain synthetic evidence','scene':'',
+                        'preference_score':.5,'category_matches':{'subject':'yes'}} for i in range(3)}
+    result=proposal_from_assessments(snapshot,interpretation,assessments,{}, {})
+    assert result['shortlist']==result['review_ids']==['0','1','2']
+    assert result['coverage'][0]['status']=='uncertain' and result['coverage'][0]['selected_ids']==[]
+    assert result['diagnostics']['yes']==0 and result['diagnostics']['confirmed_proposal']==0
+    assert result['partial'] and not result['incomplete']
+    assert any('Quantità indicativa superata' in w for w in result['warnings'])
+    snapshot['decisions']={'0':{'state':'excluded','locked':True},'1':{'state':'alternative','locked':False}}
+    manual=proposal_from_assessments(snapshot,interpretation,assessments,{}, {})
+    assert manual['shortlist']==manual['review_ids']==['2']
+
+
+def test_unknown_manual_candidate_does_not_consume_confirmed_target_and_missing_record_is_review():
+    from lrc_selection.vlm import proposal_from_assessments
+    snapshot={'photos':[{'id':str(i),'preview_ready':True} for i in range(3)],
+              'settings':{'target':1,'instructions':'subject'},'decisions':{'1':{'state':'preferred','locked':True}}}
+    interpretation={'requested_categories':[], 'ambiguities':[],'unsupported':[]}
+    assessments={'0':{'match':'yes','reason':'synthetic yes','scene':'','preference_score':.5},
+                 '1':{'match':'uncertain','reason':'synthetic unknown','scene':'','preference_score':.5}}
+    result=proposal_from_assessments(snapshot,interpretation,assessments,{}, {})
+    assert result['shortlist']==['0','1','2'] and result['review_ids']==['1','2']
+    assert result['diagnostics']['not_assessed']==1
+    assert result['shortlist_reasons']['1']=='Decisione manuale preservata.'
