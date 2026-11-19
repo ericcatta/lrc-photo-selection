@@ -116,3 +116,13 @@ L'accettazione manuale della proposta conserva lo stato da rivedere per queste i
 Recupero preparato dai 160 risultati salvati: 15 proposte ordinarie più 3 da rivedere, senza nuove inferenze, letture di immagini, chiamate API o stelle. Verificati revisione del servizio, testo originale, criteri, identità e hash delle anteprime nei metadati prima di scrivere. Il recupero usa la classifica per preferenze/scene già valutate, senza ricalcolare embedding.
 
 Recupero applicato alla sola proposta locale (revisione 179 → 180): 18 proposte, di cui 3 da rivedere; decisioni e stelle non modificate. Verifica: 172 test backend superati (uno Apple Vision escluso), 36 frontend superati e build riuscita.
+
+### 2026-11-19 — Connessione API HTTPS
+Il runtime Python macOS non aveva CA nel contesto SSL predefinito (0 certificati):
+handshake senza autenticazione verso api.openai.com fallito con verifica certificato,
+riuscito TLS 1.3 con certifi. Analisi e discovery modelli usano ora esplicitamente
+il bundle certifi, mantenendo verifica certificati e hostname. Errori API/rete
+sono classificati con messaggi fissi, senza esporre risposte provider o segreti.
+Nessuna nuova analisi cloud eseguita per questa verifica; la causa esatta del
+precedente tentativo non è recuperabile dal vecchio messaggio generico. Riserve
+precedenti conservate, senza inferire un addebito né avviare retry automatici.

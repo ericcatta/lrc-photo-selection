@@ -9,13 +9,17 @@ import io
 import json
 import math
 import sqlite3
+import ssl
 import threading
 import uuid
 from contextlib import contextmanager
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_CEILING
 from typing import Literal
-from urllib.request import Request, build_opener, HTTPRedirectHandler
+from urllib.request import Request, build_opener, HTTPRedirectHandler, HTTPSHandler
+from urllib.error import HTTPError, URLError
+
+import certifi
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -105,6 +109,46 @@ class WorkflowError(RuntimeError):
     """Safe, actionable application error; never include provider bodies or keys."""
 
 
+def _safe_failure(exc):
+    """Classify failures without exposing URLs, provider bodies or exception text."""
+    if isinstance(exc, WorkflowError):
+        return str(exc)
+    if isinstance(exc, HTTPError):
+        code = None
+        try:
+            body = json.loads(exc.read(16_385))
+            code = body.get('error', {}).get('code')
+            if not isinstance(code, str):
+                code = None
+        except (ValueError, TypeError, AttributeError, OSError):
+            pass
+        if exc.code == 401:
+            reason = 'OpenAI ha rifiutato la chiave API (HTTP 401). Verifica o sostituisci la chiave nella configurazione.'
+        elif exc.code == 403:
+            reason = 'Accesso OpenAI negato (HTTP 403). Verifica i permessi del progetto e l’accesso al modello.'
+        elif exc.code == 404:
+            reason = 'Modello o endpoint OpenAI non disponibile (HTTP 404). Aggiorna i modelli e scegli un modello accessibile.'
+        elif exc.code == 429 and code in {'insufficient_quota', 'billing_hard_limit_reached'}:
+            reason = 'Quota o credito API OpenAI insufficiente (HTTP 429). Verifica fatturazione e limiti nel tuo account OpenAI.'
+        elif exc.code == 429:
+            reason = 'Limite di richieste OpenAI raggiunto (HTTP 429). Attendi prima di preparare un nuovo invio.'
+        elif exc.code in {400, 422}:
+            reason = f'OpenAI ha rifiutato il formato o i parametri della richiesta (HTTP {exc.code}). Occorre verificare la compatibilità del modello e dello schema prima di riprovare.'
+        elif exc.code >= 500:
+            reason = f'OpenAI temporaneamente non disponibile (HTTP {exc.code}). Attendi prima di preparare un nuovo invio.'
+        else:
+            reason = f'Richiesta OpenAI rifiutata (HTTP {exc.code}). Verifica configurazione e accesso al modello.'
+    elif isinstance(exc, ssl.SSLCertVerificationError) or (isinstance(exc, URLError) and isinstance(exc.reason, ssl.SSLCertVerificationError)):
+        reason = 'Verifica del certificato HTTPS OpenAI non riuscita. Aggiorna il pacchetto dei certificati dell’app prima di riprovare.'
+    elif isinstance(exc, (TimeoutError, URLError)):
+        reason = 'Connessione a OpenAI interrotta o scaduta. Verifica la connessione di rete; l’esito della richiesta può essere incerto.'
+    elif isinstance(exc, (ValueError, TypeError)):
+        reason = 'Risposta OpenAI non leggibile o consumo non verificabile. L’esito della richiesta può essere incerto.'
+    else:
+        reason = 'Analisi sospesa per un errore interno. Occorre verificare il flusso prima di riprovare.'
+    return reason + ' Risultati e riserve conservati; nessun nuovo tentativo automatico. Per riprendere prepara una nuova stima e conferma.'
+
+
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise RuntimeError('Redirect API rifiutato')
@@ -114,7 +158,10 @@ def responses_transport(payload, key):
     request = Request('https://api.openai.com/v1/responses',
                       data=json.dumps(payload, ensure_ascii=False).encode(), method='POST',
                       headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'})
-    with build_opener(NoRedirect).open(request, timeout=60) as response:
+    # Python installed on macOS may have no system CA file. Keep verification
+    # enabled using the maintained CA bundle shipped with this application.
+    context = ssl.create_default_context(cafile=certifi.where())
+    with build_opener(NoRedirect, HTTPSHandler(context=context)).open(request, timeout=60) as response:
         body = response.read(2_000_001)
         if len(body) > 2_000_000:
             raise ValueError('Risposta troppo grande')
@@ -493,7 +540,7 @@ class OpenAIAnalysis:
             if result is not None:
                 db.execute('INSERT OR REPLACE INTO cache VALUES (?,?)', (cache_key, json.dumps(result, ensure_ascii=False)))
         if result is None:
-            raise RuntimeError('Risposta API incompleta o non verificabile: stato salvato')
+            raise WorkflowError('Risposta OpenAI incompleta, rifiutata o non conforme allo schema richiesto. Consumo registrato quando disponibile; risultati conservati. Prepara una nuova stima e conferma per riprendere.')
         return result
 
     def cached(self, key, schema):
@@ -584,7 +631,7 @@ class OpenAIAnalysis:
                 cancelled = bool(plan.get('cancel_requested'))
                 self.finish(sid, pid, 'cancelled' if cancelled else 'paused',
                             'Annullata: nessun nuovo invio. La richiesta già avviata può essere addebitata.' if cancelled else
-                            (str(exc) if isinstance(exc, WorkflowError) else 'Analisi sospesa. Risultati e riserve conservati; verifica configurazione/budget e prepara una nuova stima per riprendere.'))
+                            _safe_failure(exc))
 
     def apply_result(self, service, plan, target):
         from .semantic import select_with_category_coverage

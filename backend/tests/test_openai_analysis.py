@@ -477,3 +477,66 @@ def test_actual_payload_guard_blocks_before_transmission(client):
     assert status['job']['status'] == 'paused'
     assert 'costo o il contesto' in status['job']['error']
     assert status['spent_usd'] == status['reserved_usd'] == 0
+
+@pytest.mark.parametrize('status,code,expected', [
+    (401, None, 'chiave API'),
+    (403, None, 'permessi'),
+    (404, None, 'Modello o endpoint'),
+    (400, None, 'formato o i parametri'),
+    (429, 'insufficient_quota', 'Quota o credito'),
+    (429, None, 'Limite di richieste'),
+    (429, {'unexpected': 'private'}, 'Limite di richieste'),
+    (503, None, 'temporaneamente non disponibile'),
+])
+def test_provider_errors_are_actionable_and_never_expose_raw_bodies(client, status, code, expected):
+    import io
+    from urllib.error import HTTPError
+    runner, service = setup(client)
+    calls = []
+    def fail(payload, key):
+        calls.append(1)
+        body = json.dumps({'error': {'code': code, 'message': key + ' private prompt'}}).encode()
+        raise HTTPError('https://private-url', status, 'private reason', {}, io.BytesIO(body))
+    runner.transport = fail
+    confirm(client, estimate(client, service).json()).raise_for_status()
+    result = wait(client)
+    assert result['job']['status'] == 'paused'
+    assert expected in result['job']['error']
+    assert result['reserved_usd'] > 0
+    assert calls == [1]
+    for private in ('synthetic-secret', 'private prompt', 'private-url', 'private reason'):
+        assert private not in json.dumps(result)
+
+
+def test_certificate_error_is_distinguished_from_budget_error():
+    import ssl
+    from urllib.error import URLError
+    message = api_module._safe_failure(URLError(ssl.SSLCertVerificationError('private certificate data')))
+    assert 'certificato HTTPS' in message
+    assert 'private certificate data' not in message
+
+
+def test_transport_uses_verified_application_ca_bundle(monkeypatch):
+    import io
+    import ssl
+    from urllib.request import HTTPSHandler
+    contexts = []
+    real_context = ssl.create_default_context
+    def create_context(*, cafile):
+        assert cafile == api_module.certifi.where()
+        context = real_context(cafile=cafile)
+        contexts.append(context)
+        return context
+    def opener(*handlers):
+        tls = next(handler for handler in handlers if isinstance(handler, HTTPSHandler))
+        assert tls._context is contexts[0]
+        assert tls._context.verify_mode == ssl.CERT_REQUIRED
+        assert tls._context.check_hostname
+        class Opener:
+            def open(self, request, timeout):
+                assert request.headers['Authorization'] == 'Bearer synthetic-key'
+                return io.BytesIO(b'{"synthetic":true}')
+        return Opener()
+    monkeypatch.setattr(api_module.ssl, 'create_default_context', create_context)
+    monkeypatch.setattr(api_module, 'build_opener', opener)
+    assert api_module.responses_transport({'model': 'synthetic'}, 'synthetic-key') == {'synthetic': True}

@@ -1,6 +1,8 @@
 """Reviewed vision models/pricing; account discovery never sends photographs."""
 import json
 import os
+import ssl
+import certifi
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,7 +37,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def fetch_account_models(key):
     request = urllib.request.Request('https://api.openai.com/v1/models', headers={'Authorization': 'Bearer '+key})
-    with urllib.request.build_opener(NoRedirect()).open(request, timeout=20) as response:
+    with urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=certifi.where()))).open(request, timeout=20) as response:
         raw = response.read(2 * 1024 * 1024 + 1)
     if len(raw) > 2 * 1024 * 1024:
         raise ValueError('Elenco modelli non valido')
