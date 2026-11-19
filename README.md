@@ -188,3 +188,5 @@ npm --prefix web run build
 Su macOS il test Apple Vision richiede il relativo helper compilato. Le prove browser `node scripts/browser_smoke.mjs` e `node scripts/api_browser_smoke.mjs` richiedono Google Chrome e la build web; avviano backend isolati, usano dati sintetici e non aprono Lightroom né chiamano l’API reale.
 
 Approfondimenti: [requisiti](docs/requirements.md), [modelli locali](docs/models.md), [architettura](docs/architecture.md), [analisi OpenAI](docs/openai.md), [guida plugin](docs/plugin-guide.md), [protocollo](shared/README.md) e [risultati delle verifiche](docs/validation.md).
+
+Il provino e il campione OpenAI caricano le righe vicine alla zona visibile, mantenendo l’intera selezione disponibile. Vedi [prestazioni e collaudo con 5.000 foto sintetiche](docs/performance.md).

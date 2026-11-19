@@ -1,5 +1,6 @@
 import {useEffect,useState,useRef,type ReactNode} from 'react';
 import {api,photoPath,servicePath,type Service} from './api';
+import {VirtualGrid} from './VirtualGrid';
 
 type Job={plan_id:string;status:string;completed:number;total:number;error:string|null;final_target?:number};
 type Resume={plan_id:string;photo_ids:string[];compatible:boolean;reason:string;completed:number;total:number;final_target:number};
@@ -22,11 +23,15 @@ export function APIReview({service:s,dirty,disabled,update,openRequest=0,hideEnt
   const [usage,setUsage]=useState<Usage|null>(null),[estimate,setEstimate]=useState<Estimate|null>(null);
   const [ack,setAck]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [showAll,setShowAll]=useState(false);
+  const [showExactList,setShowExactList]=useState(false);
   const [target,setTarget]=useState(s.proposal?.api_target??s.settings.target);
   const eligible=s.photos.filter(p=>p.preview_ready);
+  const eligibleIds=new Set(eligible.map(photo=>photo.id));
+  const selectedIds=new Set(selected);
+  const pickerPhotos=eligible.filter(photo=>showAll||selectedIds.has(photo.id));
   const readyForAPI=s.status==='ready'||s.status==='analyzing'||active(usage?.job);
   const validTarget=Number.isInteger(target)&&target>=1&&target<=s.photos.length;
-  useEffect(()=>{setEstimate(null);setAck(false);},[s.revision,dirty]);
+  useEffect(()=>{setEstimate(null);setAck(false);setShowExactList(false);},[s.revision,dirty]);
   async function status(){const next=await api<Usage>(path+'/api-status');setUsage(next);return next;}
   useEffect(()=>{
     if(!open&&!active(usage?.job))return;
@@ -37,14 +42,14 @@ export function APIReview({service:s,dirty,disabled,update,openRequest=0,hideEnt
   async function show(){
     setOpen(true);setError('');setEstimate(null);setAck(false);setBusy(true);
     const initial=s.settings.workflow_path==='openai'?s.photos.map(p=>p.id):s.proposal?.effective_shortlist??s.proposal?.shortlist??s.selected_ids??s.photos.map(p=>p.id);
-    setSelected(initial.filter(id=>eligible.some(p=>p.id===id)));
-    try{const next=await status();if(next.resume?.compatible){setSelected(next.resume.photo_ids.filter(id=>eligible.some(p=>p.id===id)));}setBudget(next.budget_usd==null?'':String(next.budget_usd));const currentTarget=next.job&&s.proposal?.api_plan_id===next.job.plan_id?s.proposal.api_target:undefined;setTarget(currentTarget??(next.resume?.compatible?next.resume.final_target:undefined)??next.job?.final_target??next.api_target??s.proposal?.api_target??Math.min(s.settings.target,eligible.length||1));}catch(e){setError(describe(e));}finally{setBusy(false);}
+    setSelected(initial.filter(id=>eligibleIds.has(id)));
+    try{const next=await status();if(next.resume?.compatible){setSelected(next.resume.photo_ids.filter(id=>eligibleIds.has(id)));}setBudget(next.budget_usd==null?'':String(next.budget_usd));const currentTarget=next.job&&s.proposal?.api_plan_id===next.job.plan_id?s.proposal.api_target:undefined;setTarget(currentTarget??(next.resume?.compatible?next.resume.final_target:undefined)??next.job?.final_target??next.api_target??s.proposal?.api_target??Math.min(s.settings.target,eligible.length||1));}catch(e){setError(describe(e));}finally{setBusy(false);}
   }
   useEffect(()=>{if(openRequest>0&&openedRequest.current!==openRequest){openedRequest.current=openRequest;void show();}},[openRequest]);
   useEffect(()=>{if(estimate)summary.current?.focus();},[estimate]);
   function changeSelection(ids:string[]){setSelected(ids);setEstimate(null);setAck(false);}
   async function calculate(){
-    setBusy(true);setError('');setAck(false);setEstimate(null);
+    setBusy(true);setError('');setAck(false);setEstimate(null);setShowExactList(false);
     try{setEstimate(await api<Estimate>(path+'/api-estimate','POST',{revision:s.revision,budget_usd:budget.trim()?Number(budget):null,photo_ids:selected,target}));await status();}catch(e){setError(describe(e));}finally{setBusy(false);}
   }
   async function confirm(){
@@ -81,8 +86,9 @@ export function APIReview({service:s,dirty,disabled,update,openRequest=0,hideEnt
         <p className="hint">Indipendente dalle candidate locali. Dopo l’analisi puoi cambiarlo riutilizzando le valutazioni, senza nuovi invii.</p>
         {usage?.job?.status==='completed'&&<button type="button" disabled={!validTarget||dirty||disabled} onClick={()=>void reselect()}>Aggiorna numero finale senza nuove chiamate</button>}
         <details ref={budgetDetails}><summary>{budget.trim()&&Number.isFinite(Number(budget))?'Budget facoltativo attivo: '+usd(Number(budget)):'Budget complessivo facoltativo'}</summary><label>Budget complessivo del servizio (USD)<input ref={budgetInput} type="number" min="0" step="0.01" placeholder="Nessun limite aggiuntivo" value={budget} onChange={e=>{setBudget(e.target.value);setEstimate(null);setAck(false);}}/></label><p className="hint">Puoi lasciarlo vuoto. Con una tariffa disponibile, il budget comprende il consumo precedente e si applica anche il limite prudenziale della stima. Senza tariffa, l’app non può verificare né applicare un limite monetario. Il saldo crediti OpenAI non viene verificato.</p></details>
-        <details open={!estimate}><summary>Campione da analizzare · {selected.length} anteprime</summary><div className="api-selection-actions"><button type="button" onClick={()=>changeSelection(eligible.map(p=>p.id))}>Tutte le anteprime importate</button><button type="button" onClick={()=>changeSelection((s.proposal?.effective_shortlist??s.proposal?.shortlist??[]).filter(id=>eligible.some(p=>p.id===id)))}>Solo proposta locale</button><button type="button" onClick={()=>changeSelection([])}>Deseleziona tutte</button><label className="check"><input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)}/>Mostra anche alternative e altre foto</label></div>
-        <div className="api-photo-picker">{eligible.filter(p=>showAll||selected.includes(p.id)).map(p=><label key={p.id} className="api-photo-choice"><input type="checkbox" checked={selected.includes(p.id)} onChange={e=>changeSelection(e.target.checked?[...selected,p.id]:selected.filter(id=>id!==p.id))}/><img src={'/api'+photoPath(s.id,p.id)+'/preview'} alt="" loading="lazy"/><span>{p.filename}<small>ID {p.id}</small></span></label>)}</div>
+        <details open={!estimate}><summary>Campione da analizzare · {selected.length} anteprime</summary><div className="api-selection-actions"><button type="button" onClick={()=>changeSelection(eligible.map(p=>p.id))}>Tutte le anteprime importate</button><button type="button" onClick={()=>changeSelection((s.proposal?.effective_shortlist??s.proposal?.shortlist??[]).filter(id=>eligibleIds.has(id)))}>Solo proposta locale</button><button type="button" onClick={()=>changeSelection([])}>Deseleziona tutte</button><label className="check"><input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)}/>Mostra anche alternative e altre foto</label></div>
+        <VirtualGrid className="api-photo-picker" items={pickerPhotos} itemKey={photo=>photo.id} minColumnWidth={210} gap={8} estimatedRowHeight={92} scroll="self" resetKey={String(showAll)} renderItem={p=><label className="api-photo-choice"><input type="checkbox" checked={selectedIds.has(p.id)} onChange={e=>changeSelection(e.target.checked?[...selected,p.id]:selected.filter(id=>id!==p.id))}/><img src={'/api'+photoPath(s.id,p.id)+'/preview'} width={56} height={48} decoding="async" alt="" loading={pickerPhotos.length>100?'eager':'lazy'}/><span>{p.filename}<small>ID {p.id}</small></span></label>}/>
+
         <p>{selected.length} anteprime selezionate</p></details>
         <button type="button" disabled={disabled||!validBudget||!validTarget||!selected.length||dirty||!readyForAPI} onClick={()=>void calculate()}>Calcola stima senza inviare foto</button>
         {(!validTarget||!selected.length||!validBudget||dirty||disabled||!readyForAPI)&&<p className="hint" role="status">{dirty?'Salva i criteri prima di preparare la stima.':!validTarget?`Scegli una quantità da 1 a ${s.photos.length}.`:!selected.length?'Seleziona almeno un’anteprima.':!validBudget?'Lascia il budget vuoto oppure inserisci un importo maggiore di zero.':'Attendi il completamento dell’operazione in corso.'}</p>}
@@ -91,7 +97,7 @@ export function APIReview({service:s,dirty,disabled,update,openRequest=0,hideEnt
 
         {estimatePriced&&estimate.pricing_complete===false&&<p className="warning">La stima e il limite prudenziale riguardano questo invio. Alcune richieste precedenti non hanno una tariffa disponibile: il consumo totale e il budget complessivo residuo non sono verificabili dall’app.</p>}
         <details><summary>Testo originale che riceverà OpenAI</summary><pre className="api-original-prompt">{estimate.instructions}</pre>{estimate.criteria.length>0&&<><p>Criteri aggiuntivi del servizio</p><ul>{estimate.criteria.map((c,i)=><li key={i}>{c}</li>)}</ul></>}</details>
-        <details><summary>Elenco esatto: {estimate.photos.length} anteprime</summary><ul>{estimate.photos.map(p=><li key={p.id}>{p.filename} · ID {p.id}{p.cached?' · risultato in cache':''}</li>)}</ul></details>
+        <details open={showExactList} onToggle={event=>setShowExactList(event.currentTarget.open)}><summary>Elenco esatto: {estimate.photos.length} anteprime</summary>{showExactList&&<ul>{estimate.photos.map(p=><li key={p.id}>{p.filename} · ID {p.id}{p.cached?' · risultato in cache':''}</li>)}</ul>}</details>
         <details><summary>Dettagli e limiti della stima</summary>{estimate.warnings.map((warning,i)=><p className="hint" key={i}>{warning}</p>)}</details>
         {!estimate.can_confirm&&<div className="warning" role="alert" id="api-confirm-blocker">
           <p>{estimatePriced?`Invio bloccato: il budget disponibile (${usd(estimate.remaining_usd??0)}) è inferiore alla riserva necessaria (${usd(estimate.reserve_usd)}). Puoi ridurre le anteprime oppure modificare il budget facoltativo, lasciandolo vuoto se non vuoi un limite complessivo. Poi ricalcola la stima e conferma l’invio.`:'Invio non disponibile. Verifica la configurazione e prepara un nuovo riepilogo prima di confermare.'}</p>

@@ -244,3 +244,17 @@ scripts/install.command. Sintassi shell, link locali e sequenza dell’installer
 verificati con comandi simulati. Installazione da zero su un altro Mac non
 eseguita. Revisione pre-pubblicazione: nessuna credenziale reale, foto, catalogo
 o database runtime individuati nei file tracciati e nella cronologia esaminata.
+
+### 2026-11-19 — Provino virtualizzato per 5.000 foto
+
+Virtualizzazione delle righe del provino e del campione API con altezze misurate,
+focus sulle foto fuori vista e motivazioni espandibili conservate. Selezioni,
+filtri e navigazione lavorano sull’elenco completo; nessuna migrazione dei dati.
+68 test frontend superati; build e typecheck riusciti. Entrambi gli smoke browser
+ordinari passano con fixture e trasporto API sintetici. Il collaudo con 5.000
+record verifica scorrimento, filtri, annulla/ripristina, tastiera, anteprima grande,
+selettore API e layout mobile: inizialmente 20 schede invece di 5.000 e nessun
+salto della pagina. Confronto e istruzioni in [performance.md](performance.md).
+Il backend di produzione e il plugin Lua non sono modificati. Nessun accesso a
+cataloghi, originali o sidecar, nessuna analisi cloud reale. Safari e il servizio
+reale restano da verificare manualmente dal proprietario.

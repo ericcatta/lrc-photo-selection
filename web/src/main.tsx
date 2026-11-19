@@ -6,13 +6,15 @@ import { OpenAISettings } from './OpenAISettings';
 import { APIReview } from './APIReview';
 import { GuideButton } from './Guide';
 import {workflowPhase,workflowSteps,type WorkflowPhase} from './workflow';
+import {VirtualGrid,type VirtualGridHandle} from './VirtualGrid';
 
 const labels: Record<State,string> = {candidate:'Candidata',preferred:'Preferita',alternative:'Alternativa',excluded:'Esclusa',review:'Da rivedere'};
 const states = Object.keys(labels) as State[];
 const running = (s:Service) => s.job?.status === 'running' || s.job?.status === 'queued' || s.status === 'applying';
 const message = (e:unknown) => e instanceof Error ? e.message : 'Operazione non completata.';
-function Preview({service, photo, zoom}: {service:Service; photo:Photo; zoom?:number}) {
-  return <div className={'preview'+(zoom ? ' zoom' : '')}>{photo.preview_ready ? <img style={zoom ? {width: zoom + '%', maxWidth:'none'} : undefined} src={'/api'+photoPath(service.id,photo.id)+'/preview'} loading={zoom?'eager':'lazy'} alt={photo.filename}/> : <span>Anteprima non disponibile</span>}</div>;
+function Preview({service,photo,zoom,eager=false}: {service:Service;photo:Photo;zoom?:number;eager?:boolean}) {
+  const [state,setState]=useState<'loading'|'ready'|'error'>('loading');
+  return <div className={'preview'+(zoom?' zoom':'')} data-preview-state={state}>{photo.preview_ready?<><img width={600} height={400} decoding="async" style={zoom?{width:zoom+'%',maxWidth:'none'}:undefined} src={'/api'+photoPath(service.id,photo.id)+'/preview'} loading={zoom||eager?'eager':'lazy'} alt={photo.filename} onLoad={()=>setState('ready')} onError={()=>setState('error')}/>{state==='loading'&&<span className="preview-feedback" aria-hidden="true">Caricamento anteprima…</span>}{state==='error'&&<span className="preview-feedback" role="status">Anteprima non caricata. Apri per riprovare.</span>}</>:<span>Anteprima non disponibile</span>}</div>;
 }
 
 export function App() {
@@ -123,6 +125,9 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
   const [compare,setCompare]=useState<string[]>([]);
   const [showCompare,setShowCompare]=useState(false);
   const [viewerId,setViewerId]=useState<string|null>(null);
+  const viewerOpener=useRef<string|null>(null);
+  const grid=useRef<VirtualGridHandle>(null);
+  const [expandedReasons,setExpandedReasons]=useState<Set<string>>(()=>new Set());
   const [zoom,setZoom]=useState(100);
   const [thumbnailSize,setThumbnailSize]=useState(230);
   const [plan,setPlan]=useState<Plan|null>(null);
@@ -175,6 +180,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
   const viewerIndex=viewerId===null?-1:visible.findIndex(photo=>photo.id===viewerId);
   const viewerPhoto=visible[viewerIndex];
   useEffect(()=>{if(viewerId!==null&&viewerIndex<0)setViewerId(null);},[viewerId,viewerIndex]);
+  function closeViewer(){setViewerId(null);const index=visible.findIndex(photo=>photo.id===(viewerOpener.current??viewerId));window.requestAnimationFrame(()=>{if(index>=0)grid.current?.focus(index,'.photo-preview-trigger');else workflowHeading.current?.focus();});}
   function moveViewer(offset:number){const photo=visible[viewerIndex+offset];if(photo)setViewerId(photo.id);}
   const needsUnifiedSave=Boolean((s.settings.service_criteria??s.settings.preset_snapshot?.criteria??[]).length||s.settings.subject_query);
   const draftChanged=JSON.stringify(draft)!==JSON.stringify(base)||needsUnifiedSave;
@@ -241,7 +247,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
       const index=cards.findIndex(p=>p.id===focused);
       if(key==='arrowleft'||key==='arrowright'){
         const photo=cards[Math.min(cards.length-1,Math.max(0,index+(key==='arrowleft'?-1:1)))];
-        if(photo){e.preventDefault();document.getElementById('photo-'+photo.id)?.focus();}
+        if(photo){e.preventDefault();grid.current?.focus(visible.indexOf(photo));}
         return;
       }
       const photo=cards[index];
@@ -321,12 +327,11 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
         </div>
         {emptyProposal&&<p role="status" className="empty-selection">Nessuna foto proposta. Stai vedendo tutte le {s.photos.length} foto disponibili, nessuna inclusa automaticamente. Usa Includi sulle foto da conservare oppure rivedi i criteri. Nessun file è stato eliminato.</p>}
         {visible.length===0&&<p className="empty-filter">{shortlistOnly&&shortlist.size===0?'Nessuna foto proposta: rivedi istruzioni e avvisi. Tutte le foto restano disponibili disattivando il filtro.':'Nessuna foto corrisponde ai filtri.'}</p>}
-        <div className="grid" style={{'--thumbnail-size': `${thumbnailSize}px`} as CSSProperties}>
-          {visible.map((photo,index)=>{
+        <VirtualGrid apiRef={grid} className="grid" items={visible} itemKey={photo=>photo.id} minColumnWidth={thumbnailSize} resetKey={[filter,group,chronological,shortlistOnly].join('|')} style={{'--thumbnail-size':`${thumbnailSize}px`} as CSSProperties} renderItem={(photo,index)=>{
             const d=cardDecision(photo);const included=selectionIds.has(photo.id);const manual=Boolean(s.decisions[photo.id]);const g=groupMap.get(photo.id);const suggestion=suggestions.get(photo.id);
             return <article className={'card state-'+d.state+(included?' selection-included':' selection-outside')+(compare.includes(photo.id)?' is-compared':'')} key={photo.id} id={'photo-'+photo.id} tabIndex={0} onFocus={()=>setFocused(photo.id)}>
               <div className="photo-topline"><span>{String(index+1).padStart(2,'0')}</span><span>{included?'Nella selezione':'Non selezionata'}{d.locked?' · Bloccata':''}</span></div>
-              {photo.preview_ready?<button className="photo-preview-trigger" type="button" aria-label={'Apri anteprima '+photo.filename} onClick={event=>{event.currentTarget.focus({preventScroll:true});setViewerId(photo.id);}}><Preview service={s} photo={photo}/></button>:<Preview service={s} photo={photo}/>}
+              {photo.preview_ready?<button className="photo-preview-trigger" type="button" aria-label={'Apri anteprima '+photo.filename} onClick={event=>{event.currentTarget.focus({preventScroll:true});viewerOpener.current=photo.id;setViewerId(photo.id);}}><Preview service={s} photo={photo} eager={visible.length>100||index<24}/></button>:<Preview service={s} photo={photo}/>}
               <div className="cardbody">
                 <span className="detail-tag selection-tag">{manual?(included?'Inclusa manualmente':'Esclusa manualmente'):included?(reviewIds.has(photo.id)?'Da rivedere · inclusa nella proposta':draftSelection?'Proposta automatica':'Candidata'):'Fuori dalla selezione'}</span>
 
@@ -340,7 +345,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
                 </div>
                 {suggestion&&photoMap.has(suggestion)&&<button className="text-button" onClick={()=>{setCompare([photo.id,suggestion]);setZoom(100);setShowCompare(true);}}>Confronto suggerito</button>}
                 <div className="photo-footer"><label className="check"><input type="checkbox" checked={compare.includes(photo.id)} onChange={()=>chooseCompare(photo.id)}/>Confronta</label>
-                  {(g||s.proposal?.reasons[photo.id]||s.proposal?.shortlist_reasons?.[photo.id])&&<details className="photo-reason"><summary>Motivo</summary>
+                  {(g||s.proposal?.reasons[photo.id]||s.proposal?.shortlist_reasons?.[photo.id])&&<details className="photo-reason" open={expandedReasons.has(photo.id)} onToggle={event=>{const open=event.currentTarget.open;setExpandedReasons(previous=>{if(previous.has(photo.id)===open)return previous;const next=new Set(previous);if(open)next.add(photo.id);else next.delete(photo.id);return next;});}}><summary>Motivo</summary>
                     {g&&<p>{!g.representative?'Gruppo senza candidate':g.representative===photo.id?'Rappresentante del gruppo':('Rappresentata da '+(photoMap.get(g.representative)?.filename??'altra foto'))}</p>}
                     <p>{s.proposal?.shortlist_reasons?.[photo.id]??s.proposal?.reasons[photo.id]??g?.reason}</p>
                     {g?.representative&&selectedIds.has(g.representative)&&!selectedIds.has(photo.id)&&!d.locked&&!s.decisions[g.representative]?.locked&&<button disabled={busy} onClick={()=>void replace(g.representative!,photo.id)}>Sostituisci la rappresentante</button>}
@@ -348,8 +353,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
                 </div>
               </div>
             </article>;
-          })}
-        </div>
+          }}/>
         <footer className="gallery-footer"><span>{s.proposal?(apiProposal?'Proposta OpenAI · revisione manuale disponibile':'Proposta locale · revisione manuale disponibile'):'Selezione manuale · tutte le foto iniziano candidate'}</span><span>Escludere non cancella il file</span></footer>
       </section>
       <aside className="inspector" aria-label="Strumenti di selezione">
@@ -393,7 +397,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
         {phase==='outcome'&&s.receipts.length>0&&<section className="tool-section"><h2>{currentOutcome?'Esiti Lightroom':'Esiti Lightroom precedenti'}</h2>{s.receipts.map(r=><details key={r.batch_id}><summary>{r.results.filter(i=>i.status==='applied').length} stelle applicate · {r.results.length} foto verificate</summary><ul>{r.results.map(i=><li key={i.photo_id}>{photoMap.get(i.photo_id)?.filename??i.photo_id}: {({applied:'Applicata',skipped:'Saltata',conflict:'Conflitto',uncertain:'Da verificare'} as Record<string,string>)[i.status]??i.status} — {i.reason}</li>)}</ul></details>)}</section>}
       </aside>
     </div>
-    {viewerPhoto&&<Modal title="Anteprima foto" className="photo-viewer" close={()=>setViewerId(null)} onKeyDownCapture={e=>{if(e.altKey||e.ctrlKey||e.metaKey)return;if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();e.stopPropagation();moveViewer(e.key==='ArrowLeft'?-1:1);}else if(e.key==='Escape'){e.preventDefault();e.stopPropagation();setViewerId(null);}}}>
+    {viewerPhoto&&<Modal title="Anteprima foto" className="photo-viewer" close={closeViewer} onKeyDownCapture={e=>{if(e.altKey||e.ctrlKey||e.metaKey)return;if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();e.stopPropagation();moveViewer(e.key==='ArrowLeft'?-1:1);}else if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeViewer();}}}>
       <p className="viewer-caption" aria-live="polite"><strong>{viewerPhoto.filename}</strong><span>{viewerIndex+1} / {visible.length}</span></p>
       <figure className="viewer-image">{viewerPhoto.preview_ready?<img src={'/api'+photoPath(s.id,viewerPhoto.id)+'/preview'} alt={viewerPhoto.filename}/>:<span className="viewer-unavailable">Anteprima non disponibile</span>}</figure>
       <div className="viewer-navigation"><button type="button" aria-label="Foto precedente" disabled={viewerIndex<=0} onClick={()=>moveViewer(-1)}>← Precedente</button><p className="hint">Anteprima locale · ← → per navigare · Esc per chiudere</p><button type="button" aria-label="Foto successiva" disabled={viewerIndex>=visible.length-1} onClick={()=>moveViewer(1)}>Successiva →</button></div>
