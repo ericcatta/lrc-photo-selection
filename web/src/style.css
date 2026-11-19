@@ -184,3 +184,21 @@ dialog form label { margin-bottom: 15px; }
 .api-original-prompt { white-space:pre-wrap; overflow-wrap:anywhere; padding:12px; background:#e9e9e5; max-height:220px; overflow:auto; font:inherit; }
 .api-estimate { border-top:1px solid var(--border); padding-top:12px; }
 .api-review-modal .check { margin:12px 0; }
+
+/* Guidance follows the existing neutral Lightroom palette. */
+.workflow-panel{grid-column:1/-1;position:sticky;top:0;z-index:5;background:var(--panel,#f6f6f3);border-block:1px solid var(--line,#c9cbc5);padding:12px 24px;box-shadow:0 2px 5px #00000009}
+.workflow-panel nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.workflow-panel nav button{display:flex;gap:8px;align-items:center;border-color:transparent;background:transparent;padding:6px 10px;color:inherit}
+.workflow-panel nav button span{display:inline-grid;place-items:center;width:20px;height:20px;border:1px solid #b7bcb7;border-radius:50%;font-size:11px}
+.workflow-panel nav button[aria-current=step]{background:#e3e6e1;border-color:#b7bcb7;font-weight:600}
+.workflow-next{display:flex;justify-content:space-between;gap:24px;align-items:center}
+.workflow-next h2{margin:0;font-size:16px}.workflow-next p{margin:5px 0;font-size:13px;max-width:780px}.workflow-next progress{display:block;width:100%;height:5px;margin-top:7px}
+.workflow-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:420px}.workflow-actions .hint{flex-basis:100%}
+.workflow-checklist{font-size:13px;margin:8px 0 0;padding-left:22px;line-height:1.7}.workflow-outcome{font-size:13px;margin-top:12px}
+.analysis-details{margin-bottom:14px}.analysis-details summary{cursor:pointer;font-size:13px;color:#657068}.analysis-details p{margin:8px 0}
+.app-settings{padding:10px 24px;border-bottom:1px solid #c9cbc5;background:#f6f6f3;font-size:13px}.app-settings>summary{cursor:pointer}.secondary-tools>button{margin-top:12px}
+[hidden]{display:none!important}
+@media(max-width:760px){.workflow-panel{padding:10px 14px;position:relative}.workflow-next{display:block}.workflow-actions{margin-top:12px;max-width:none}.workflow-panel nav{gap:2px}.workflow-panel nav button{padding:5px;font-size:12px}}
+.workspace{grid-template-areas:'heading heading' 'workflow workflow' 'gallery inspector'}.workflow-panel{grid-area:workflow}
+@media(max-width:760px){.workspace{grid-template-areas:'heading' 'workflow' 'inspector' 'gallery'}}
+@media(max-width:760px){.workflow-panel{position:sticky;top:0;max-height:45vh;overflow:auto}}

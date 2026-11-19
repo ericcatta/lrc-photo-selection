@@ -228,6 +228,15 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
                 criterion['status'] = 'ambiguous' if blocked else 'supported'
                 criterion['reason'] = ('; '.join(blocked) if blocked else
                     'Richiesta valutata dal modello visivo sulle anteprime; il risultato resta da verificare.')
+        from .workflow import workflow_summary
+        receipt_revision = service.get('last_rating_revision')
+        if receipt_revision is None and service.get('receipts'):
+            with store.connect() as db:
+                row = db.execute('SELECT body FROM batches WHERE id=? AND service_id=?',
+                                 (service['receipts'][-1]['batch_id'], service['id'])).fetchone()
+            if row:
+                receipt_revision = json.loads(row['body'])['revision'] + 1
+        result['workflow'] = workflow_summary(service, receipt_revision)
         result['selected_ids'] = effective_selected(service)
         result['can_undo'] = service.get('decision_cursor', 0) > 0
         result['can_redo'] = service.get('decision_cursor', 0) < len(service.get('decision_history', []))
@@ -749,6 +758,7 @@ def create_app(data_dir: Path | None = None, token: str | None = None, web_dir: 
             if any(r.status == 'applied' and (r.before != 0 or r.after != 1) for r in body.results):
                 raise HTTPException(422, 'Esito applicato non valido: ammesse solo stelle da 0 a 1')
             s['receipts'].append(incoming)
+            s['last_rating_revision'] = s['revision'] + 1
             s['status'] = 'ready'
             s.pop('active_batch_id', None)
             s.pop('confirmed_batch_id', None)

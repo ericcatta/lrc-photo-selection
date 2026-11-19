@@ -169,3 +169,24 @@ it('explains insufficient budget beside confirmation and edits it without sendin
   expect((screen.getByLabelText(/Confermo l’invio a OpenAI/) as HTMLInputElement).checked).toBe(false);
   expect(calls.some(c=>c.url.endsWith('/api-confirm'))).toBe(false);
 });
+
+it('restores compatible interrupted sample without estimating or sending',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async(url:string,init?:RequestInit)=>{
+    calls.push({url,body:init?.body?JSON.parse(String(init.body)):undefined});
+    return response({...initial,resume:{plan_id:'old',compatible:true,reason:'',photo_ids:['p1'],completed:15,total:18,final_target:1},job:{plan_id:'old',status:'paused',completed:15,total:18,error:null}});
+  }));
+  render(<APIReview service={service} dirty={false} disabled={false} update={vi.fn()} openRequest={1} hideEntry/>);
+  await screen.findByText(/Ripresa del campione precedente: 15/);
+  expect(screen.getByLabelText(/altra.jpg/)).toBeTruthy();
+  expect(screen.queryByLabelText(/sintetica.jpg/)).toBeNull();
+  expect((screen.getByLabelText('Numero finale OpenAI') as HTMLInputElement).value).toBe('1');
+  expect(calls.every(c=>c.url.endsWith('/api-status'))).toBe(true);
+});
+
+it('warns when old sample cannot be reused and does not send',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async(url:string)=>{calls.push({url});return response({...initial,resume:{plan_id:'old',compatible:false,reason:'Criteri cambiati: prepara una nuova stima.',photo_ids:['p1'],completed:15,total:18,final_target:1}});}));
+  render(<APIReview service={service} dirty={false} disabled={false} update={vi.fn()} openRequest={1}/>);
+  await screen.findByText('Criteri cambiati: prepara una nuova stima.');
+  expect(screen.getByLabelText(/sintetica.jpg/)).toBeTruthy();
+  expect(calls.every(c=>c.url.endsWith('/api-status'))).toBe(true);
+});

@@ -52,6 +52,7 @@ def test_resumed_new_import_sends_json_null_and_preserves_uploaded_previews(tmp_
         }
         package.loaded.Common=common
         package.loaded.Selection={}
+        package.loaded.Guide={button=function() return {} end}
         local sdk = {
             LrDialogs={confirm=function() return 'ok' end},
             LrProgressScope=function()

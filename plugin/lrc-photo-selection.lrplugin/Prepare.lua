@@ -6,6 +6,7 @@ local Progress = import 'LrProgressScope'
 local Tasks = import 'LrTasks'
 local View = import 'LrView'
 local Selection = require 'Selection'
+local Guide = require 'Guide'
 
 local function metadata(catalog, photos)
     local raw = catalog:batchGetRawMetadata(photos,
@@ -46,6 +47,8 @@ local function askTitle(context, label, count)
             view:static_text { title = 'Catalogo: ' .. label },
             view:static_text { title = tostring(count) .. ' fotografie nella selezione attuale.' },
             view:edit_field { value = View.bind 'title', width_in_chars = 42 },
+            view:static_text { title = 'Poi continua nella web app: istruzioni → analisi → revisione → Lightroom.' },
+            Guide.button(),
         }, actionVerb = 'Prepara anteprime', cancelVerb = 'Annulla',
     }
     if answer ~= 'ok' then return nil end

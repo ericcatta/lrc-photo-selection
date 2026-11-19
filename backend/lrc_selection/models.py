@@ -51,10 +51,17 @@ class Settings(StrictModel):
     preset_version: int = Field(default=0, ge=0)
     preset_snapshot: dict | None = None
     mode: Literal['local', 'hybrid'] = 'local'
+    workflow_path: Literal['local', 'hybrid', 'openai'] | None = None
     instructions: str = Field(default='', max_length=10000)
     subject_query: str = Field(default='', max_length=500)
     service_criteria: list[str] | None = Field(default=None, max_length=50)
     camera_offsets: dict[str, float] = Field(default_factory=dict)
+
+    @model_validator(mode='after')
+    def workflow_mode(self):
+        if self.workflow_path is not None:
+            self.mode = 'local' if self.workflow_path == 'local' else 'hybrid'
+        return self
 
 class SettingsUpdate(StrictModel):
     revision: int

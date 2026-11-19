@@ -34,8 +34,11 @@ try {
   const request=async path=>await evaluate(`fetch('/api'+${JSON.stringify(path)}).then(r=>r.json())`);
   await waitFor("[...document.querySelectorAll('.service-switch option')].some(o=>o.value==='synthetic-ui')");
   await evaluate("(()=>{const s=document.querySelector('.service-switch select');s.value='synthetic-ui';s.dispatchEvent(new Event('change',{bubbles:true}));})()");
-  await waitFor("[...document.querySelectorAll('button')].some(b=>b.textContent==='Stima e rivedi invio a OpenAI'&&!b.disabled)");
-  await click('Stima e rivedi invio a OpenAI');
+  await waitFor("[...document.querySelectorAll('button')].some(b=>b.textContent==='Continua con OpenAI'&&!b.disabled)");
+  await click('Guida');
+  await waitFor("document.querySelector('dialog[open]')?.textContent.includes('XMP')");
+  await click('Chiudi guida');
+  await click('Continua con OpenAI');
   await waitFor("document.querySelector('dialog[open] input[type=number]')&&!document.querySelector('dialog[open] fieldset').disabled");
   if(await evaluate("[...document.querySelectorAll('dialog label')].find(l=>l.textContent.startsWith('Budget complessivo del servizio'))?.querySelector('input').value!==''"))throw new Error('Budget should remain optional and blank');
   await click('Calcola stima senza inviare foto');
@@ -68,6 +71,12 @@ try {
   const mobileImage=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
   await writeFile('.build/api-review-mobile.png',Buffer.from(mobileImage.data,'base64'));
   console.log(JSON.stringify({estimateNoTransmission:true,explicitConfirmation:true,originalTextPreserved:true,mockCalls:after.mock_calls,usageRecorded:true,optionalBudget:true,reselectionWithoutNetwork:true,realNetworkCalls:0,mobile,screenshots:['.build/api-review-before-confirm.png','.build/api-review-completed.png','.build/api-review-mobile.png']}));
+  await evaluate("document.querySelector('[aria-label=\"Chiudi invio OpenAI\"]').click()");
+  await waitFor("document.querySelector('[aria-current=step]')?.textContent.includes('Rivedi')");
+  await evaluate('window.scrollTo(0,0)');
+  await call('Emulation.setDeviceMetricsOverride',{width:1500,height:1100,deviceScaleFactor:1,mobile:false});
+  const guided=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
+  await writeFile('.build/guided-workflow.png',Buffer.from(guided.data,'base64'));
   await call('Browser.close').catch(()=>{});
 } finally {
   if(ws)ws.close();

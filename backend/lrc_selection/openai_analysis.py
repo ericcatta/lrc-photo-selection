@@ -418,11 +418,41 @@ class OpenAIAnalysis:
     def public_plan(self, plan):
         return {k: v for k, v in plan.items() if k not in {'results', 'settings_hash', 'per_call_reserve_micro', 'interpretation_key', 'collection_key', 'collection_reserve_micro', 'collection_input_bound'}} | {'photos': [{k: v for k, v in p.items() if k != 'cache_key'} for p in plan['photos']]}
 
+    def resume_info(self, service, plans):
+        attempted = next((plan for plan in plans if plan.get('status') != 'estimated'), None)
+        if not attempted or attempted.get('status') not in ('paused', 'cancelled'):
+            return None
+        settings = service['settings']
+        criteria = settings.get('service_criteria')
+        if criteria is None:
+            criteria = (settings.get('preset_snapshot') or {}).get('criteria', [])
+        photos = {photo['id']: photo for photo in service['photos']}
+        compatible = attempted.get('schema_version') == SCHEMA_VERSION
+        reason = ''
+        if (settings.get('instructions', ''), criteria, settings.get('subject_query', '')) != (attempted['instructions'], attempted['criteria'], attempted['subject_query']):
+            compatible, reason = False, 'I criteri sono cambiati: prepara un nuovo campione e verifica la stima.'
+        elif any(photo['id'] not in photos or not photos[photo['id']].get('preview_ready') or photos[photo['id']].get('preview_sha256') != photo['preview_sha256'] for photo in attempted['photos']):
+            compatible, reason = False, 'Il campione o le anteprime sono cambiati: scegli nuovamente le fotografie.'
+        else:
+            try:
+                same_model = self.configured_model() == attempted['model']
+            except (ValueError, HTTPException):
+                same_model = False
+            if not same_model:
+                compatible, reason = False, 'Il modello è cambiato o non è disponibile: i risultati precedenti non sono riutilizzabili con questa configurazione.'
+        if not compatible and not reason:
+            reason = 'Il formato di analisi è cambiato: prepara una nuova stima.'
+        return {'plan_id': attempted['plan_id'], 'photo_ids': [photo['id'] for photo in attempted['photos']],
+                'compatible': compatible, 'reason': reason, 'completed': attempted['completed'],
+                'total': attempted['total'], 'final_target': attempted['final_target']}
+
     def status(self, sid):
-        self.store.get(sid)
+        service = self.store.get(sid)
         with self.db() as db:
             row = db.execute('SELECT body FROM plans WHERE sid=? ORDER BY rowid DESC LIMIT 1', (sid,)).fetchone()
             job = json.loads(row['body']) if row else None
+            plans = [json.loads(record['body']) for record in db.execute('SELECT body FROM plans WHERE sid=? ORDER BY rowid DESC', (sid,))]
+            resume = self.resume_info(service, plans)
             receipts = []
             input_tokens = output_tokens = 0
             for call in db.execute('SELECT id,plan_id,cost,reserved,body FROM calls WHERE sid=? ORDER BY rowid', (sid,)):
@@ -436,6 +466,7 @@ class OpenAIAnalysis:
                                  'reserved_usd': call['reserved'] / 1e6, 'diagnostic': record.get('diagnostic')})
             return self.totals(db, sid) | {
                 'job': {k: job.get(k) for k in ('plan_id', 'status', 'completed', 'total', 'error', 'final_target')} if job else None,
+                'resume': resume,
                 'usage': {'input_tokens': input_tokens, 'output_tokens': output_tokens},
                 'receipts': receipts, 'cost_basis': 'Token effettivi a tariffa standard; sconti cache non sottratti. Verificare la fatturazione OpenAI.'}
 

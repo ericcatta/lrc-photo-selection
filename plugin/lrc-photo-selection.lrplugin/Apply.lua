@@ -5,6 +5,7 @@ local Progress = import 'LrProgressScope'
 local View = import 'LrView'
 
 local Selection = require 'Selection'
+local Guide = require 'Guide'
 
 local function confirmPlan(context, service, plan, label, byID)
     local properties = Binding.makePropertyTable(context)
@@ -24,12 +25,17 @@ local function confirmPlan(context, service, plan, label, byID)
             view:static_text { title = 'Servizio: ' .. service.title .. ' (revisione ' .. plan.revision .. ')' },
             view:static_text { title = 'Piano ' .. plan.batch_id .. ' · ' .. #plan.items .. ' operazioni' },
             view:scrolled_view { width = 620, height = 180, view:edit_field { value = View.bind 'operations', width_in_chars = 72, height_in_lines = #lines + 1, enabled = false } },
-            view:static_text { title = 'Controlla Impostazioni catalogo → Metadati prima di confermare.' },
+            view:static_text { title = '1. In Impostazioni catalogo → Metadati verifica che la scrittura automatica XMP sia disattivata.' },
+            view:static_text { title = '2. La casella qui sotto attesta la verifica: non modifica le preferenze di Lightroom.' },
             view:checkbox { title = 'Ho verificato che la scrittura automatica delle modifiche in XMP è disattivata.', value = View.bind 'xmpChecked' },
-        }, actionVerb = 'Applica stelle', cancelVerb = 'Annulla',
+            Guide.button(),
+        }, actionBinding = { enabled = { bind_to_object = properties, key = 'xmpChecked' } }, actionVerb = 'Applica stelle', cancelVerb = 'Annulla',
     }
     if answer ~= 'ok' then return false end
-    assert(properties.xmpChecked == true, 'Applicazione bloccata: l’impostazione XMP non è stata verificata.')
+    if properties.xmpChecked ~= true then
+        Dialogs.message('Verifica XMP necessaria', 'Nessuna stella applicata. Verifica la scrittura automatica XMP in Impostazioni catalogo → Metadati, poi riapri Applica stelle e spunta l’attestazione nel plugin.', 'warning')
+        return false
+    end
     return true
 end
 
@@ -128,6 +134,15 @@ Common.run('Applica stelle', function(context)
     end
     progress:done()
     Common.request('POST', endpoint .. '/rating-receipts', {batch_id = batch, results = results})
-    Dialogs.message('Applicazione completata', tostring(applied) .. ' valutazioni applicate su '
-        .. #plan.items .. ' previste. Consulta la ricevuta nella web app.', 'info')
+    local skipped, review = 0, 0
+    for _, outcome in ipairs(results) do
+        if outcome.status == 'skipped' then skipped = skipped + 1 end
+        if outcome.status == 'conflict' or outcome.status == 'uncertain' then review = review + 1 end
+    end
+    local complete = applied == #plan.items
+    Dialogs.message(complete and 'Applicazione completata' or 'Applicazione da verificare',
+        tostring(applied) .. ' stelle applicate su ' .. #plan.items .. ' previste; '
+        .. skipped .. ' saltate; ' .. review .. ' da verificare.\n'
+        .. 'Consulta Esito nella web app per la ricevuta. Per vedere le candidate: Libreria → Extra plug-in → Mostra le candidate in Lightroom.',
+        complete and 'info' or 'warning')
 end)

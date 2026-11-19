@@ -28,3 +28,20 @@ Le sole target_rating consentite dal produttore di piani sono 1, per baseline 0.
 - `POST /api/services/{id}/features`: `{revision}`, avvio esplicito dell’estrazione dei componenti locali configurati. Usa il medesimo stato job; nessun download o richiesta cloud.
 
 Aggiornare backend, web app e plugin insieme: i nuovi plugin richiedono la conferma esplicita del piano. `PRAGMA user_version=1` riguarda solo SQLite dell’app; l’aggiornamento è additivo, non riscrive i servizi esistenti. I campi mancanti di archivio e cronologia assumono i valori iniziali. I digest dei manifest v1 esistenti sono preservati.
+
+## Navigazione guidata v1
+
+`GET /api/services/{id}` aggiunge `workflow` con `schema_version:1`, percorso
+`local|hybrid|openai`, fase `configure|analyze|review|lightroom|outcome`, stato
+della proposta, conteggi e identificativi del piano. `outcome` è valorizzato
+soltanto per la ricevuta pertinente alla revisione corrente e separa
+`applied`, `skipped`, `conflict`, `uncertain`, `total`. Non autorizza operazioni.
+
+`Settings.workflow_path` è facoltativo: se assente si usa il precedente `mode`.
+Il percorso diretto OpenAI mantiene `mode=hybrid` per compatibilità dei controlli
+esistenti, ma viene distinto esplicitamente nella navigazione.
+
+`GET /api/services/{id}/api-status` aggiunge `resume` per l’ultimo tentativo
+interrotto: piano, ID esatti del campione, compatibilità, motivo, avanzamento e
+obiettivo finale. Una nuova stima non nasconde il tentativo interrotto. Questo
+riepilogo non recupera consensi e non avvia chiamate API.

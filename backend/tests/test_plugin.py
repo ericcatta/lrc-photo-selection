@@ -83,6 +83,7 @@ def simulate(current=0, edited=100, xmp=True, target=1, previous=False, fail_jou
         error('Unexpected request ' .. path)
       end
       package.loaded.Common = common
+      package.loaded.Guide = {button=function() return {} end}
       local view = {}
       for _, name in ipairs({'column','static_text','popup_menu','checkbox','edit_field','scrolled_view'}) do view[name]=function(_,v) return v end end
       local sdk = {
@@ -93,10 +94,11 @@ def simulate(current=0, edited=100, xmp=True, target=1, previous=False, fail_jou
             if dialog.title == 'Conferma applicazione stelle' then
               props.xmpChecked=options.xmp
               test.operations = props.operations
+              test.xmpBinding = dialog.actionBinding.enabled.key
             end
             return 'ok'
           end,
-          message=function() end,
+          message=function(title, message) test.messageTitle=title; test.message=message end,
         },
         LrProgressScope=function()
           return {isCanceled=function() return options.cancel end, setPortionComplete=function() end, done=function() end}
@@ -131,7 +133,7 @@ def test_manual_edit_after_import_is_preserved():
     assert result.receipt.results[1].status == 'conflict'
 
 
-@pytest.mark.parametrize('options', [{'xmp': False}, {'target': 5}, {'claim': False}, {'fail_journal': True}])
+@pytest.mark.parametrize('options', [{'target': 5}, {'claim': False}, {'fail_journal': True}])
 def test_unsafe_or_unverified_conditions_never_write(options):
     result = simulate(**options)
     assert result.writes == 0
@@ -256,6 +258,7 @@ def test_append_uploads_only_new_preview_and_show_selects_exact_candidate():
         error('Unexpected HTTP ' .. method .. ' ' .. path)
     end
     package.loaded.Common = common
+    package.loaded.Guide = {button=function() return {} end}
     ''')
     lua.globals().package.loaded.Selection = lua.execute((PLUGIN / 'Selection.lua').read_text())
     lua.execute((PLUGIN / 'Prepare.lua').read_text())
@@ -305,3 +308,20 @@ def test_local_connection_discovery_still_requires_dialog_confirmation(accept):
     assert result.stored == accept
     assert result.requested == accept
     assert result.opened == accept
+
+
+def test_xmp_gate_is_bound_and_defensive_without_lua_error():
+    result = simulate(xmp=False)
+    assert result.writes == 0 and not result.claimed
+    assert result.error is None
+    assert result.xmpBinding == 'xmpChecked'
+    assert result.messageTitle == 'Verifica XMP necessaria'
+
+
+def test_completion_distinguishes_partial_and_points_to_next_step():
+    complete = simulate()
+    assert complete.messageTitle == 'Applicazione completata'
+    assert 'Mostra le candidate in Lightroom' in complete.message
+    partial = simulate(current=3)
+    assert partial.messageTitle == 'Applicazione da verificare'
+    assert '1 da verificare' in partial.message

@@ -99,3 +99,24 @@ Sul Mac Apple Silicon: installare `.venv/bin/pip install -e '.[local-instruction
 Scegli un preset per copiare i suoi criteri e modificarli nel servizio, oppure parti senza preset e scrivi direttamente le istruzioni. L’analisi restituisce una proposta da rivedere. Confermarla modifica soltanto la selezione locale; le stelle richiedono ancora il piano e la conferma separata in Lightroom.
 
 La sezione OpenAI salva la chiave nel portachiavi e permette di scegliere il modello da una lista aggiornabile dall’account. Il flusso OpenAI può partire direttamente dalle anteprime importate o dalla proposta locale e richiede stima e conferma esplicita del campione e del limite prudenziale; non invia automaticamente foto. Istruzioni originali preservate, consumi e riserve persistenti, ripresa con nuova conferma. Dettagli in [docs/openai.md](docs/openai.md).
+
+## Flusso guidato
+
+La barra Configura → Analizza → Rivedi → Lightroom → Esito indica il prossimo
+passaggio e lascia il provino disponibile. Consultare un passaggio non avvia
+analisi, invii o applicazioni. I percorsi Solo locale, Locale + OpenAI e
+Direttamente OpenAI distinguono la quantità locale dall’obiettivo OpenAI.
+
+Per un’analisi API interrotta usare Prepara la ripresa: il campione precedente
+viene recuperato quando compatibile e la nuova stima distingue valutazioni nuove
+e riutilizzate. L’invio richiede sempre una nuova conferma esplicita.
+
+La Guida è disponibile nella web app, nel menu Extra plug-in e nei dialoghi
+Prepara servizio/Applica stelle. Quella Lightroom funziona anche con backend
+spento. La [fonte condivisa e la verifica](docs/plugin-guide.md) documentano
+come mantenere coerenti le istruzioni. Esito mostra soltanto ricevute del plugin:
+le modifiche saltate o da verificare non sono presentate come successo completo.
+
+Il riepilogo `workflow` del servizio è versionato (`schema_version: 1`) e deriva
+dallo stato persistito; orienta la navigazione senza autorizzare operazioni.
+I servizi precedenti conservano percorso, cache, decisioni e ricevute.

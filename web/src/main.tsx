@@ -4,6 +4,8 @@ import { api, ApiError, photoPath, servicePath, type Plan, type Face, type Photo
 import './style.css';
 import { OpenAISettings } from './OpenAISettings';
 import { APIReview } from './APIReview';
+import { GuideButton } from './Guide';
+import {workflowPhase,workflowSteps,type WorkflowPhase} from './workflow';
 
 const labels: Record<State,string> = {candidate:'Candidata',preferred:'Preferita',alternative:'Alternativa',excluded:'Esclusa',review:'Da rivedere'};
 const states = Object.keys(labels) as State[];
@@ -66,10 +68,10 @@ export function App() {
         </label>
         <button onClick={refresh} disabled={busy}>Aggiorna</button>
       </div>}
-      <span className="local-status">{service?.settings.mode==='hybrid'?'Ibrida · invio da confermare':'Solo locale'}</span>
+      <span className="local-status">{service?`${({local:'Solo locale',hybrid:'Locale + OpenAI',openai:'Direttamente OpenAI'} as const)[draftPath(service.settings)]} · ${workflowSteps.find(x=>x.id===workflowPhase(service))?.label}`:'Solo locale'}</span>
     </header>
     <main>
-      {!login&&<OpenAISettings/>}
+      {!login&&<details className="app-settings"><summary>Impostazioni OpenAI</summary><OpenAISettings/></details>}
       {error && <p role="alert" className="warning">{error}</p>}
       {login ? <form className="panel empty" onSubmit={e => {e.preventDefault();void connect(token);}}>
         <p className="eyebrow">Connessione al plugin</p><h1>Apri la sessione locale</h1>
@@ -85,6 +87,7 @@ export function App() {
   </div>;
 }
 
+function draftPath(settings:Settings){return settings.workflow_path??settings.mode;}
 function unifiedSettings(settings:Settings):Settings {
   const criteria=settings.service_criteria??settings.preset_snapshot?.criteria??[];
   const additions=[...criteria,...(settings.subject_query?[`Soggetto da privilegiare: ${settings.subject_query}`]:[])];
@@ -93,6 +96,14 @@ function unifiedSettings(settings:Settings):Settings {
 
 function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,features,instructionsAvailable}:{service:Service;update:(s:Service)=>void;presets:Preset[];setPresets:(p:Preset[])=>void;dirty:{current:boolean};refreshSummaries:()=>Promise<void>;features:boolean;instructionsAvailable:boolean}) {
   const path=servicePath(s.id);
+  const serverPhase=workflowPhase(s);
+  const [phase,setPhase]=useState<WorkflowPhase>(serverPhase);
+  const [apiOpenRequest,setApiOpenRequest]=useState(0);
+  const workflowHeading=useRef<HTMLHeadingElement>(null);
+  const previousPhase=useRef(serverPhase);
+  useEffect(()=>{if(previousPhase.current!==serverPhase){setPhase(serverPhase);previousPhase.current=serverPhase;}},[serverPhase]);
+  function navigate(next:WorkflowPhase){setPhase(next);window.requestAnimationFrame(()=>workflowHeading.current?.focus());}
+  const route=draftPath(s.settings);
   const [draft,setDraft]=useState<Settings>(()=>unifiedSettings(s.settings));
   const [base,setBase]=useState(()=>unifiedSettings(s.settings));
 
@@ -166,7 +177,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
     window.addEventListener('beforeunload',warn);
     return()=>{dirty.current=false;window.removeEventListener('beforeunload',warn);};
   },[dirty,draftChanged]);
-  const requestSettings=()=>({target:draft.target,preset_id:draft.preset_id,preset_version:draft.preset_version,mode:draft.mode,instructions:draft.instructions,subject_query:'',service_criteria:[],camera_offsets:draft.camera_offsets});
+  const requestSettings=()=>({target:draft.target,preset_id:draft.preset_id,preset_version:draft.preset_version,mode:draft.mode,workflow_path:draft.workflow_path??draft.mode,instructions:draft.instructions,subject_query:'',service_criteria:[],camera_offsets:draft.camera_offsets});
   async function action(work:()=>Promise<void>) {
     setPending(true);setError('');
     try{await work();}catch(e){setError(message(e));if(e instanceof ApiError&&e.status===409){try{const latest=await api<Service>(path);update(latest);}catch{ /* preserve original error */ }}}
@@ -176,7 +187,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
     if(staleDraft)return;
     let current=s;
     if(draftChanged){current=await api<Service>(path+'/settings','PUT',{revision:s.revision,settings:requestSettings()});update(current);setDraft(unifiedSettings(current.settings));setBase(unifiedSettings(current.settings));}
-    if(start)update(await api<Service>(path+'/analyze','POST',{revision:current.revision}));
+    if(start){navigate('analyze');if((draft.workflow_path??draft.mode)==='openai')setApiOpenRequest(x=>x+1);else update(await api<Service>(path+'/analyze','POST',{revision:current.revision}));}
   });}
   async function decide(photo:Photo,state:State,locked:boolean,confirm_last=false){await action(async()=>{
     try{const next=await api<Service>(path+'/decisions/'+encodeURIComponent(photo.id),'PATCH',{revision:s.revision,state,locked,confirm_last}); update(next);setCoverage(null);}
@@ -237,33 +248,59 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
   const analysisInProgress=s.status==='analyzing'||s.job?.status==='running'||s.job?.status==='queued';
   const outdatedProposal=Boolean(s.requires_analysis||s.proposal?.stale||draftChanged);
   const currentProposal=!analysisInProgress&&!outdatedProposal;
+  const draftRoute=draft.workflow_path??draft.mode;
+  const apiProposal=Boolean(s.proposal?.api_plan_id);
+  const interruptedAPI=s.job?.kind==='openai'&&['interrupted','failed','paused','cancelled'].includes(s.job.status);
+  const needsLocal=!instructionsAvailable&&Boolean(draft.instructions.trim())&&draftRoute!=='openai';
+  const ratingBlocked=busy||Boolean(s.proposal?.shortlist&&!s.proposal.shortlist_accepted)||s.requires_analysis||s.proposal?.stale||!selectedIds.size||draftChanged||s.status!=='ready';
+  const effectiveTarget=s.workflow?.target??(apiProposal?s.proposal?.api_target??s.settings.target:s.settings.target);
+  const currentCount=s.proposal?.shortlist&&!s.proposal.shortlist_accepted?shortlist.size:selectedIds.size;
+  const currentOutcome=s.workflow?s.workflow.outcome:s.receipts.length?{applied:s.receipts.at(-1)!.results.filter(x=>x.status==='applied').length,skipped:s.receipts.at(-1)!.results.filter(x=>x.status==='skipped').length,conflict:s.receipts.at(-1)!.results.filter(x=>x.status==='conflict').length,uncertain:s.receipts.at(-1)!.results.filter(x=>x.status==='uncertain').length,total:s.receipts.at(-1)!.results.length}:null;
   const valid=Number.isInteger(draft.target)&&draft.target>=1&&draft.target<=s.photos.length;
   return <>
     <div className="workspace">
       <header className="top">
         <div className="service-heading"><p className="eyebrow">Servizio importato</p><h1>{s.title}</h1><p className="selection-count">{!currentProposal&&s.proposal&&!failedProposal?'Risultati precedenti · ':''}{failedProposal?`${s.photos.length} foto disponibili · ${selectedIds.size} candidate correnti`:s.proposal?.shortlist&&!s.proposal.shortlist_accepted ? `${shortlist.size} proposte da rivedere · ${s.photos.length} foto disponibili` : `${selectedIds.size} candidate su ${s.photos.length} foto`}</p></div>
-        <div className="run-actions"><button disabled={pending||running(s)||draftChanged||s.status!=='ready'} onClick={()=>void archive()}>{s.archived?'Riapri servizio':'Archivia servizio'}</button>
-        <button className="primary" disabled={busy||Boolean(s.proposal?.shortlist&&!s.proposal.shortlist_accepted)||s.requires_analysis||s.proposal?.stale||!selectedIds.size||draftChanged||s.status!=='ready'} onClick={()=>{setPlan(null);setShowRating(true);}}>Rivedi le stelle <span aria-hidden="true">→</span></button></div>
+        <GuideButton/>
       </header>
+      <section className="workflow-panel" aria-label="Percorso del servizio">
+        <nav aria-label="Passaggi della selezione">{workflowSteps.map((step,index)=><button key={step.id} type="button" aria-current={phase===step.id?'step':undefined} onClick={()=>navigate(step.id)}><span>{index+1}</span>{step.label}</button>)}</nav>
+        <div className="workflow-next">
+          <div><h2 ref={workflowHeading} tabIndex={-1}>{workflowSteps.find(x=>x.id===phase)?.label}</h2>
+            <p>{phase==='configure'?'Scegli le istruzioni e il percorso. Il provino rimane disponibile durante tutti i passaggi.':phase==='analyze'?analysisInProgress?'Analisi in corso. Puoi consultare il provino mentre attendi.':interruptedAPI?`Analisi interrotta: ${s.job?.completed??0} di ${s.job?.total??0} foto completate. Prepara la ripresa e verifica la nuova stima.`:route==='hybrid'&&!apiProposal?'Rivedi il campione locale, poi continua con OpenAI oppure usa il risultato locale.':'Prepara o controlla l’analisi prima di rivedere la selezione.':phase==='review'?`Rivedi le ${shortlist.size||selectedIds.size} foto proposte, comprese ${reviewIds.size} da verificare. Conferma quando la selezione ti soddisfa.`:phase==='lightroom'?s.confirmed_batch_id?'Elenco confermato nella web app. Continua dal plugin Lightroom.':'Prepara l’elenco delle stelle: le valutazioni già presenti saranno preservate.':'Controlla qui la ricevuta inviata dal plugin Lightroom.'}</p>
+            {analysisInProgress&&<p role="status">{s.job?.kind==='openai'?'OpenAI':'Locale'} · {s.job?.completed??0} / {s.job?.total??s.photos.length}<progress value={s.job?.completed??0} max={s.job?.total||s.photos.length}/></p>}
+          </div>
+          <div className="workflow-actions">
+            {phase==='configure'&&<><button className="primary" disabled={busy||!valid||staleDraft||needsLocal} onClick={()=>void save(true)}>{draftRoute==='openai'?'Continua alla stima OpenAI':draftRoute==='hybrid'?'Avvia selezione locale':'Avvia selezione'}</button>{(!valid||needsLocal||busy||staleDraft)&&<p className="hint">{staleDraft?'Carica i criteri salvati nella configurazione prima di continuare.':!valid?'Imposta una quantità tra 1 e '+s.photos.length+'.':needsLocal?'Il modello locale non è disponibile: configura il modello o scegli Direttamente OpenAI.':'Attendi il termine dell’operazione corrente.'}</p>}</>}
+            {phase==='analyze'&&!analysisInProgress&&<>{route!=='local'&&<button className="primary" disabled={draftChanged||Boolean(s.archived)} onClick={()=>setApiOpenRequest(x=>x+1)}>{interruptedAPI?'Prepara la ripresa':apiProposal?'Rivedi analisi OpenAI':'Continua con OpenAI'}</button>}{s.proposal&&!s.proposal.stale&&<button className={route==='local'?'primary':''} onClick={()=>navigate('review')}>{route==='hybrid'&&!apiProposal?'Usa il risultato locale':'Rivedi la proposta'}</button>}{(!s.proposal||s.proposal.stale)&&route==='local'&&<button onClick={()=>navigate('configure')}>Rivedi configurazione</button>}{draftChanged&&<p className="hint">Torna a Configura e salva le istruzioni prima di preparare l’invio.</p>}{s.archived&&<p className="hint">Riapri il servizio da Opzioni del servizio prima di preparare l’invio.</p>}</>}
+            {phase==='review'&&<><button className="primary" disabled={busy||draftChanged||Boolean(s.proposal?.stale)||!selectedIds.size} onClick={()=>{if(s.proposal?.shortlist&&!s.proposal.shortlist_accepted)setShowAccept(true);else navigate('lightroom');}}>Conferma selezione</button>{(busy||!selectedIds.size||!s.proposal||s.proposal.stale||draftChanged)&&<p className="hint">{busy?'Attendi il termine dell’operazione corrente.':!selectedIds.size?'Includi almeno una fotografia per confermare la selezione.':s.proposal?.stale||draftChanged?'Le impostazioni sono cambiate: torna a Configura.':'Puoi confermare la selezione manuale oppure avviare un’analisi da Configura.'}</p>}</>}
+            {phase==='lightroom'&&!s.confirmed_batch_id&&<><button className="primary" disabled={ratingBlocked} onClick={()=>{setPlan(null);setShowRating(true);}}>Rivedi le stelle <span aria-hidden="true">→</span></button>{ratingBlocked&&<p className="hint">{s.proposal?.shortlist&&!s.proposal.shortlist_accepted?'Conferma prima la selezione nel passaggio Rivedi.':draftChanged||s.requires_analysis||s.proposal?.stale?'Aggiorna la proposta da Configura prima di preparare le stelle.':'Attendi l’operazione corrente o scegli almeno una candidata.'}</p>}</>}
+            {phase==='outcome'&&<button onClick={()=>navigate('review')}>Torna alla selezione</button>}
+          </div>
+        </div>
+        {phase==='lightroom'&&s.confirmed_batch_id&&<ol className="workflow-checklist"><li>In Lightroom apri Impostazioni catalogo → Metadati e verifica che la scrittura automatica XMP sia disattivata.</li><li>Apri Libreria → Extra plug-in → Applica stelle.</li><li>Nel plugin attesta la verifica XMP, controlla l’elenco e conferma.</li><li>Attendi la ricevuta: comparirà nel passaggio Esito.</li></ol>}
+        {phase==='outcome'&&!currentOutcome&&<p className="hint">Nessuna ricevuta Lightroom disponibile. Completa prima il passaggio Lightroom.</p>}
+        {phase==='outcome'&&currentOutcome&&<div className="workflow-outcome"><strong>{currentOutcome.applied} stelle applicate</strong><p>{currentOutcome.skipped} saltate · {currentOutcome.conflict+currentOutcome.uncertain} da verificare</p>{currentOutcome.skipped+currentOutcome.conflict+currentOutcome.uncertain>0&&<p className="warning">Esito parziale: apri Esiti Lightroom per controllare le fotografie interessate.</p>}</div>}
+      </section>
       <section className="gallery" aria-label="Area di revisione">
         {error&&<p role="alert" className="warning">{error}</p>}
         {s.archived&&<p role="status" className="warning">Servizio archiviato. Riaprilo per continuare la revisione.</p>}
         {s.status==='applying'&&<p role="status" className="warning">Applicazione stelle in corso. Completa o riprendi dal plugin.</p>}
-        {failedProposal?<p role="alert" className="warning">{s.job?.error??'Analisi non riuscita: nessuna nuova proposta valida.'} Tutte le foto restano disponibili per la revisione. Nessun tentativo viene avviato automaticamente.</p>:analysisInProgress?<p role="status" className="warning">Analisi in corso · {s.job?.completed??0} / {s.job?.total??s.photos.length}. {s.proposal?'I risultati visibili appartengono alla proposta precedente.':'La nuova proposta sarà disponibile al termine.'}</p>:outdatedProposal?<p role="status" className="warning">Impostazioni o foto aggiornate. Avvia la selezione per ottenere una nuova proposta; i risultati precedenti non descrivono i criteri attuali.</p>:s.proposal?.warnings.map((w,i)=><p key={i} className="warning">{w}</p>)}
-        {currentProposal&&selectedIds.size<s.settings.target&&<p className="warning">La revisione corrente è sotto il numero richiesto ({s.settings.target}).</p>}
+        {failedProposal?<p role="alert" className="warning">{s.job?.error??'Analisi non riuscita: nessuna nuova proposta valida.'} Tutte le foto restano disponibili per la revisione. Nessun tentativo viene avviato automaticamente.</p>:analysisInProgress?<p role="status" className="warning">Analisi in corso · {s.job?.completed??0} / {s.job?.total??s.photos.length}. {s.proposal?'I risultati visibili appartengono alla proposta precedente.':'La nuova proposta sarà disponibile al termine.'}</p>:outdatedProposal?<p role="status" className="warning">Impostazioni o foto aggiornate. Avvia la selezione per ottenere una nuova proposta; i risultati precedenti non descrivono i criteri attuali.</p>:s.proposal&&s.proposal.warnings.length>0&&<details className="analysis-details"><summary>Dettagli dell’analisi · {s.proposal.warnings.length} informazioni</summary>{[...new Set(s.proposal.warnings)].map((w,i)=><p key={i} className="hint">{w}</p>)}</details>}
+        {currentProposal&&currentCount<effectiveTarget&&<p className="warning">La revisione corrente è sotto il numero richiesto ({effectiveTarget}).</p>}
         <div className="reviewhead">
           <div className="review-title"><h2>Provino</h2><span>{visible.length} foto</span></div>
-          <div className="review-filters">
+          <div className="review-filters"><label>Mostra<select value={shortlistOnly?'proposal':filter==='review'?'review':'all'} onChange={e=>{setShortlistOnly(e.target.value==='proposal');setFilter(e.target.value==='review'?'review':'all');}}><option value="all">Tutte le foto</option>{s.proposal?.shortlist&&<option value="proposal">Proposta</option>}<option value="review">Da rivedere</option></select></label>
             <label>Stato<select value={filter} onChange={e=>{setFilter(e.target.value as State|'all');}}><option value="all">Tutte</option>{states.map(x=><option key={x} value={x}>{labels[x]}</option>)}</select></label>
             {groups.length>0&&<label>Gruppo<select value={group} onChange={e=>{setGroup(e.target.value);}}><option value="">Tutti</option>{groups.map((g,i)=><option key={g.id} value={g.id}>Gruppo {i+1} · {g.members.length} foto</option>)}</select></label>}
             <label className="thumbnail-control">Anteprime<input aria-label="Dimensione anteprime" type="range" min={170} max={330} step={10} value={thumbnailSize} onChange={e=>setThumbnailSize(e.target.valueAsNumber)}/></label>
-            <button disabled={compare.length!==2} onClick={()=>{setZoom(100);setShowCompare(true);}}>Confronta ({compare.length}/2)</button>
+            <button disabled={compare.length!==2} onClick={()=>{setZoom(100);setShowCompare(true);}}>Confronta ({compare.length}/2)</button>{compare.length!==2&&<span className="hint">Seleziona due foto con Confronta.</span>}
           </div>
         </div>
         <div className="review-history">
-          {s.proposal?.shortlist&&!failedProposal&&<><button className="primary" disabled={busy||draftChanged||s.proposal.stale||!shortlist.size} onClick={()=>setShowAccept(true)}>Usa questa proposta ({shortlist.size})</button><label className="check"><input type="checkbox" checked={shortlistOnly} onChange={e=>{setShortlistOnly(e.target.checked);}}/>Proposta da rivedere ({shortlist.size})</label><span className="hint">Proposta automatica separata dalle {selectedIds.size} candidate correnti</span></>}
-          <button disabled={busy||!s.can_undo} onClick={()=>void changeHistory('undo')}>Annulla decisione</button>
-          <button disabled={busy||!s.can_redo} onClick={()=>void changeHistory('redo')}>Ripristina decisione</button>
+          {s.proposal?.shortlist&&!failedProposal&&<><span className="hint">{shortlist.size} foto nella proposta · {reviewIds.size} da rivedere</span><span className="hint">Proposta automatica separata dalle {selectedIds.size} candidate correnti</span></>}
+          <button title={!s.can_undo?'Nessuna decisione da annullare':undefined} disabled={busy||!s.can_undo} onClick={()=>void changeHistory('undo')}>Annulla decisione</button>
+          <button title={!s.can_redo?'Nessuna decisione da ripristinare':undefined} disabled={busy||!s.can_redo} onClick={()=>void changeHistory('redo')}>Ripristina decisione</button>
           <label className="check"><input type="checkbox" checked={chronological} onChange={e=>setChronological(e.target.checked)}/>Ordine cronologico</label>
           <details><summary>Scorciatoie</summary><p>← → Naviga · M Mantieni · X Escludi · C Seleziona per confronto · V Apri confronto · ⌘Z Annulla · ⇧⌘Z Ripristina</p></details>
         </div>
@@ -276,7 +313,7 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
               <Preview service={s} photo={photo}/>
               <div className="cardbody">
                 {shortlist.has(photo.id)&&<span className="detail-tag">{reviewIds.has(photo.id)?'Da rivedere · inclusa nella proposta':'Nella proposta'}</span>}
-                {s.proposal?.shortlist_reasons?.[photo.id]&&<p className="hint">{s.proposal.shortlist_reasons[photo.id]}</p>}
+
                 <strong className="filename" title={photo.filename}>{photo.filename}</strong>
                 <div className="photo-meta"><span title={photo.camera}>{photo.camera||'Fotocamera non indicata'}</span><span className="stars" aria-label={photo.baseline_rating+' stelle all’importazione'} title="Valutazione all’importazione">{'★'.repeat(photo.baseline_rating)}{'☆'.repeat(5-photo.baseline_rating)}</span></div>
                 <div className="photo-controls">
@@ -286,9 +323,9 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
                 </div>
                 {suggestion&&photoMap.has(suggestion)&&<button className="text-button" onClick={()=>{setCompare([photo.id,suggestion]);setZoom(100);setShowCompare(true);}}>Confronto suggerito</button>}
                 <div className="photo-footer"><label className="check"><input type="checkbox" checked={compare.includes(photo.id)} onChange={()=>chooseCompare(photo.id)}/>Confronta</label>
-                  {(g||s.proposal?.reasons[photo.id])&&<details className="photo-reason"><summary>Motivo</summary>
+                  {(g||s.proposal?.reasons[photo.id]||s.proposal?.shortlist_reasons?.[photo.id])&&<details className="photo-reason"><summary>Motivo</summary>
                     {g&&<p>{!g.representative?'Gruppo senza candidate':g.representative===photo.id?'Rappresentante del gruppo':('Rappresentata da '+(photoMap.get(g.representative)?.filename??'altra foto'))}</p>}
-                    <p>{s.proposal?.reasons[photo.id]??g?.reason}</p>
+                    <p>{s.proposal?.shortlist_reasons?.[photo.id]??s.proposal?.reasons[photo.id]??g?.reason}</p>
                     {g?.representative&&selectedIds.has(g.representative)&&!selectedIds.has(photo.id)&&!d.locked&&!s.decisions[g.representative]?.locked&&<button disabled={busy} onClick={()=>void replace(g.representative!,photo.id)}>Sostituisci la rappresentante</button>}
                   </details>}
                 </div>
@@ -296,18 +333,18 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
             </article>;
           })}
         </div>
-        <footer className="gallery-footer"><span>{s.proposal?'Proposta locale · revisione manuale disponibile':'Selezione manuale · tutte le foto iniziano candidate'}</span><span>Escludere non cancella il file</span></footer>
+        <footer className="gallery-footer"><span>{s.proposal?(apiProposal?'Proposta OpenAI · revisione manuale disponibile':'Proposta locale · revisione manuale disponibile'):'Selezione manuale · tutte le foto iniziano candidate'}</span><span>Escludere non cancella il file</span></footer>
       </section>
       <aside className="inspector" aria-label="Strumenti di selezione">
-        <form className="config" onSubmit={e=>{e.preventDefault();void save(true);}}>
+        <form hidden={phase!=='configure'} className="config" onSubmit={e=>{e.preventDefault();void save(true);}}>
           <div className="panel-heading"><h2>Configura la selezione</h2>{draftChanged&&<span className="unsaved" role="status">Da salvare</span>}</div>
           {staleDraft&&<p role="alert" className="warning">I criteri salvati sono cambiati. <button type="button" onClick={()=>{setBase(unifiedSettings(s.settings));setDraft(unifiedSettings(s.settings));}}>Carica i criteri salvati</button></p>}
           <fieldset disabled={busy||staleDraft}>
             <div className="tool-section target-section">
-              <div className="target-heading"><label htmlFor="target-count">Candidate locali</label><input id="target-count" type="number" min={1} max={s.photos.length} value={Number.isNaN(draft.target)?'':draft.target} required onChange={e=>setDraft({...draft,target:e.target.valueAsNumber})}/></div>
+              <div className="target-heading"><label htmlFor="target-count">{draftRoute==='openai'?'Selezione finale OpenAI':'Candidate locali'}</label><input id="target-count" type="number" min={1} max={s.photos.length} value={Number.isNaN(draft.target)?'':draft.target} required onChange={e=>setDraft({...draft,target:e.target.valueAsNumber})}/></div>
               <input aria-label="Regola numero di candidate" aria-describedby="target-help" type="range" min={1} max={s.photos.length} step={1} value={Number.isFinite(draft.target)?Math.min(s.photos.length,Math.max(1,draft.target)):1} onChange={e=>setDraft({...draft,target:e.target.valueAsNumber})}/>
               <div className="range-ends"><span>1</span><span>{s.photos.length} foto</span></div>
-              <p id="target-help" className="hint">Obiettivo della selezione locale. Il numero finale OpenAI si imposta separatamente nel riepilogo di invio.</p>
+              <p id="target-help" className="hint">{draftRoute==='openai'?'Obiettivo finale, verificabile anche nel riepilogo prima dell’invio.':draftRoute==='hybrid'?'Obiettivo locale. La quantità finale OpenAI si sceglie separatamente prima dell’invio.':'Numero indicativo minimo di candidate, con gli incerti conservati in aggiunta.'}</p>
             </div>
             <div className="tool-section">
               <label>Parti da un preset<select value={presetChoice} onChange={e=>{const p=presets.find(p=>p.id+':'+p.version===e.target.value);if(p)applyPreset(p);else{setPresetChoice('');setDraft({...draft,preset_id:'',preset_version:0,preset_snapshot:null,service_criteria:[],subject_query:'',instructions:''});}}}>
@@ -318,28 +355,30 @@ function Workspace({service:s,update,presets,setPresets,dirty,refreshSummaries,f
               <div className="preset-actions"><button className="text-button" type="button" onClick={()=>editPreset(null)}>Salva come nuovo preset</button>{offer&&<button className="text-button" type="button" onClick={()=>editPreset(offer)}>Aggiorna preset</button>}</div>
               <p className="hint">{snapshot ? 'Base applicata: '+snapshot.name+' · v'+snapshot.version+'. Il testo qui sotto è una copia modificabile per questo servizio.' : 'Nessun preset applicato. Puoi configurare direttamente questo servizio.'}</p>
               {snapshot&&<button className="text-button" type="button" onClick={()=>{setPresetChoice('');setDraft({...draft,preset_id:'',preset_version:0,preset_snapshot:null,service_criteria:[],subject_query:'',instructions:''});}}>Rimuovi preset e criteri</button>}
-              <label>Modalità<select value={draft.mode} onChange={e=>setDraft({...draft,mode:e.target.value as Settings['mode']})}><option value="local">Solo locale</option><option value="hybrid">Ibrida: locale + OpenAI</option></select></label>
+              <label>Percorso<select value={draftRoute} onChange={e=>{const workflow_path=e.target.value as 'local'|'hybrid'|'openai';setDraft({...draft,workflow_path,mode:workflow_path==='local'?'local':'hybrid'});}}><option value="local">Solo locale</option><option value="hybrid">Locale + OpenAI</option><option value="openai">Direttamente OpenAI</option></select></label>{draftRoute!=='local'&&<button type="button" className="text-button" onClick={()=>{const details=document.querySelector<HTMLDetailsElement>('.app-settings');if(details){details.open=true;details.scrollIntoView({block:'start'});details.querySelector<HTMLElement>('summary')?.focus();}}}>Configura chiave e modello OpenAI</button>}
             </div>
             <section className="tool-section">
               <h2>Istruzioni e criteri del servizio</h2>
               <label>Istruzioni per la selezione<textarea rows={5} value={draft.instructions} placeholder="Descrivi cosa vuoi conservare e cosa confrontare in questo servizio" onChange={e=>setDraft({...draft,instructions:e.target.value})}/></label>
-              {!instructionsAvailable&&(draft.instructions.trim())&&<p className="warning">Il modello locale per applicare queste istruzioni non è ancora disponibile. La selezione con istruzioni sarà disponibile dopo la configurazione.</p>}
+              {needsLocal&&<p className="warning">Il modello locale per applicare queste istruzioni non è ancora disponibile. La selezione con istruzioni sarà disponibile dopo la configurazione.</p>}
               <p className="hint">Descrivi liberamente le priorità. Riceverai la proposta e gli eventuali avvisi su richieste ambigue o in conflitto.</p>
             </section>
             {cameras.length>0&&<details className="tool-section disclosure"><summary>Sincronizzazione fotocamere</summary><p className="hint">Offset in secondi applicati all’ordine cronologico nella web app.</p><div className="camera-fields">{cameras.map(c=><label key={c}>{c}<input type="number" step="1" value={draft.camera_offsets[c]??0} onChange={e=>setDraft({...draft,camera_offsets:{...draft.camera_offsets,[c]:Number(e.target.value)}})}/></label>)}</div></details>}
-            <div className="tool-section run-section"><div className="run-actions"><button type="button" disabled={!draftChanged||!valid} onClick={()=>void save(false)}>Salva criteri</button><button className="primary" disabled={!valid||s.status!=='ready'||(!instructionsAvailable&&Boolean(draft.instructions.trim()))}>{draft.mode==='hybrid'?'Avvia selezione locale':'Avvia selezione'}</button></div><p className="hint">La proposta si rivede nel provino. Le decisioni manuali e le foto conservate per copertura restano visibili.</p></div>
+            <div className="tool-section run-section"><div className="run-actions"><button type="button" disabled={!draftChanged||!valid} onClick={()=>void save(false)}>Salva criteri</button></div><p className="hint">La proposta si rivede nel provino. Le decisioni manuali e le foto conservate per copertura restano visibili.</p></div>
           </fieldset>
         </form>
-        {draft.mode==='hybrid'&&<APIReview service={s} dirty={draftChanged} disabled={busy} update={update}/>}
+        {draft.mode==='hybrid'&&<APIReview service={s} dirty={draftChanged} disabled={busy} update={update} hideEntry openRequest={apiOpenRequest}/>}
+        <details className="tool-section secondary-tools"><summary>Opzioni del servizio</summary><button disabled={pending||running(s)||draftChanged||s.status!=='ready'} onClick={()=>void archive()}>{s.archived?'Riapri servizio':'Archivia servizio'}</button>
         {s.criteria.length>0&&<details className="tool-section disclosure criteria-status"><summary>Stato dei criteri<span className="detail-tag">{s.criteria.filter(c=>c.status!=='supported').length} da verificare</span></summary><ul>{s.criteria.map((c,i)=><li key={i}><strong>{c.text}</strong><span className="criterion-status">{({partial:'Parzialmente supportato',unsupported:'Non applicato',supported:'Supportato',pending:'Da analizzare',ambiguous:'Ambiguo'} as Record<string,string>)[c.status]??c.status}</span><p>{c.reason}</p></li>)}</ul></details>}
         {features&&<section className="tool-section"><button disabled={busy} onClick={()=>void action(async()=>update(await api<Service>(path+'/features','POST',{revision:s.revision})))}>Analizza dettagli locali</button></section>}
-        {s.job&&<section className="tool-section job-status" aria-live="polite"><h2>{s.job.kind==='openai'?'Analisi OpenAI':'Analisi locale'}</h2><p>{({running:'In corso',queued:'In coda',completed:'Completata',completed_with_warnings:'Completata · casi da rivedere',interrupted:'Interrotta',failed:'Non riuscita'} as Record<string,string>)[s.job.status]??s.job.status} · {s.job.completed} / {s.job.total}</p>{s.job.status==='running'&&<progress value={s.job.completed} max={s.job.total||1}/>} {s.job.error&&<p className="warning">{s.job.error}</p>}</section>}
-        {s.receipts.length>0&&<section className="tool-section"><h2>Esiti Lightroom</h2>{s.receipts.map(r=><details key={r.batch_id}><summary>{r.results.filter(i=>i.status==='applied').length} stelle applicate · {r.results.length} foto verificate</summary><ul>{r.results.map(i=><li key={i.photo_id}>{photoMap.get(i.photo_id)?.filename??i.photo_id}: {({applied:'Applicata',skipped:'Saltata',conflict:'Conflitto',uncertain:'Da verificare'} as Record<string,string>)[i.status]??i.status} — {i.reason}</li>)}</ul></details>)}</section>}
+        </details>
+        {phase==='analyze'&&s.job&&<section className="tool-section job-status" aria-live="polite"><h2>{s.job.kind==='openai'?'Analisi OpenAI':'Analisi locale'}</h2><p>{({running:'In corso',queued:'In coda',completed:'Completata',completed_with_warnings:'Completata · casi da rivedere',interrupted:'Interrotta',failed:'Non riuscita'} as Record<string,string>)[s.job.status]??s.job.status} · {s.job.completed} / {s.job.total}</p>{s.job.status==='running'&&<progress value={s.job.completed} max={s.job.total||1}/>} {s.job.error&&<p className="warning">{s.job.error}</p>}</section>}
+        {phase==='outcome'&&s.receipts.length>0&&<section className="tool-section"><h2>{currentOutcome?'Esiti Lightroom':'Esiti Lightroom precedenti'}</h2>{s.receipts.map(r=><details key={r.batch_id}><summary>{r.results.filter(i=>i.status==='applied').length} stelle applicate · {r.results.length} foto verificate</summary><ul>{r.results.map(i=><li key={i.photo_id}>{photoMap.get(i.photo_id)?.filename??i.photo_id}: {({applied:'Applicata',skipped:'Saltata',conflict:'Conflitto',uncertain:'Da verificare'} as Record<string,string>)[i.status]??i.status} — {i.reason}</li>)}</ul></details>)}</section>}
       </aside>
     </div>
     {showCompare&&<Modal title="Confronta le anteprime" close={()=>setShowCompare(false)}><p className="hint">Zoom relativo alla vista. Le anteprime possono non bastare per valutare la nitidezza dell’originale.</p><label>Zoom {zoom}%<input type="range" min={100} max={300} step={10} value={zoom} onChange={e=>setZoom(e.target.valueAsNumber)}/></label><label className="check"><input type="checkbox" checked={linked} onChange={e=>{mirrored.current=null;setLinked(e.target.checked);}}/>Collega scorrimento</label><div className="comparison" ref={comparison}>{compare.map(id=>{const p=photoMap.get(id);return p&&<ComparisonPhoto key={id} service={s} photo={p} zoom={zoom} onScroll={mirrorScroll}/>;})}</div></Modal>}
-    {showAccept&&<Modal title="Usa la proposta come selezione" close={()=>setShowAccept(false)}><p>Conferma {shortlist.size} foto proposte come candidate. Le altre restano accessibili tra le escluse dalla proposta; le decisioni manuali precedenti prevalgono.</p><p className="warning">Può lasciare situazioni senza candidate: verifica prima di confermare.</p><p>Nessuna stella viene applicata. La scelta può essere annullata dal provino.</p><button className="primary" disabled={busy||draftChanged||s.proposal?.stale} onClick={()=>void action(async()=>{update(await api<Service>(path+'/accept-shortlist','POST',{revision:s.revision,confirm_last:true}));setShowAccept(false);})}>Conferma candidate</button>{error&&<p role="alert" className="warning">{error}</p>}</Modal>}
-    {showRating&&<Modal title="Rivedi le stelle" close={()=>setShowRating(false)}><p>{selectedIds.size} candidate su {s.photos.length} foto. {s.proposal?'La proposta include le decisioni manuali.':'Selezione manuale, nessuna analisi eseguita.'}</p><p>Il plugin può assegnare una stella alle candidate idonee con zero stelle. Prima dell’applicazione occorre verificare che la scrittura automatica dei metadati su file sia disabilitata.</p>{plan?<><p role="status"><strong>{plan.items.length} modifiche proposte</strong> · revisione {plan.revision}</p>{plan.warnings.map((w,i)=><p className="warning" key={i}>{w}</p>)}{plan.items.length>0&&<><p>Conferma questo elenco e apri “Applica stelle” nel plugin. Controlla la scrittura automatica dei metadati e conferma in Lightroom.</p><ul className="planlist">{plan.items.map(i=><li key={i.photo_id}>{i.filename??photoMap.get(i.photo_id)?.filename??i.photo_id} · ID {i.local_id} · {i.expected_rating} → 1 ★</li>)}</ul>{planReceived?<p role="status">Operazione registrata. Consulta Esiti Lightroom.</p>:plan.revision!==s.revision?<p role="alert">Piano superato. Chiudi e prepara una nuova anteprima.</p>:confirmed?<p role="status">Piano confermato · {plan.batch_id}</p>:<button className="primary" disabled={busy||draftChanged} onClick={()=>void action(async()=>{await api(path+'/rating-plan/confirm','POST',{batch_id:plan.batch_id});update(await api<Service>(path));})}>Conferma elenco per Lightroom</button>}</>}</>:<button className="primary" disabled={busy} onClick={()=>void action(async()=>setPlan(await api<Plan>(path+'/rating-plan','POST',{revision:s.revision})))}>Prepara anteprima delle modifiche</button>}{error&&<p role="alert" className="warning">{error}</p>}</Modal>}
+    {showAccept&&<Modal title="Usa la proposta come selezione" close={()=>setShowAccept(false)}><p>Conferma {shortlist.size} foto proposte come candidate. Le altre restano accessibili tra le escluse dalla proposta; le decisioni manuali precedenti prevalgono.</p><p className="warning">Può lasciare situazioni senza candidate: verifica prima di confermare.</p><p>Nessuna stella viene applicata. La scelta può essere annullata dal provino.</p><button className="primary" disabled={busy||draftChanged||s.proposal?.stale} onClick={()=>void action(async()=>{update(await api<Service>(path+'/accept-shortlist','POST',{revision:s.revision,confirm_last:true}));setShowAccept(false);navigate('lightroom');})}>Conferma candidate</button>{error&&<p role="alert" className="warning">{error}</p>}</Modal>}
+    {showRating&&<Modal title="Rivedi le stelle" close={()=>setShowRating(false)}><p>{selectedIds.size} candidate su {s.photos.length} foto. {s.proposal?'La proposta include le decisioni manuali.':'Selezione manuale, nessuna analisi eseguita.'}</p><p>Il plugin può assegnare una stella alle candidate idonee con zero stelle. Prima dell’applicazione occorre verificare che la scrittura automatica dei metadati su file sia disabilitata.</p>{plan?<><p role="status"><strong>{plan.items.length} modifiche proposte</strong> · revisione {plan.revision}</p><p>{selectedIds.size} candidate: {plan.items.length} nuove stelle. Le valutazioni già presenti vengono preservate.</p>{plan.items.length===0&&<p>Nessuna modifica necessaria: nessuna nuova stella da assegnare. Puoi usare “Mostra le candidate in Lightroom” per ritrovare la selezione.</p>}{plan.warnings.map((w,i)=><p className="warning" key={i}>{w}</p>)}{plan.items.length>0&&<><p>Conferma questo elenco e apri “Applica stelle” nel plugin. Controlla la scrittura automatica dei metadati e conferma in Lightroom.</p><ul className="planlist">{plan.items.map(i=><li key={i.photo_id}>{i.filename??photoMap.get(i.photo_id)?.filename??i.photo_id} · ID {i.local_id} · {i.expected_rating} → 1 ★</li>)}</ul>{planReceived?<p role="status">Operazione registrata. Consulta Esiti Lightroom.</p>:plan.revision!==s.revision?<p role="alert">Piano superato. Chiudi e prepara una nuova anteprima.</p>:confirmed?<div role="status"><p>Piano confermato · {plan.batch_id}</p><ol><li>Chiudi questa finestra e torna in Lightroom.</li><li>Apri Libreria → Extra plug-in → Applica stelle.</li><li>Verifica XMP, spunta l’attestazione nel plugin e conferma l’elenco.</li></ol></div>:<button className="primary" disabled={busy||draftChanged} onClick={()=>void action(async()=>{await api(path+'/rating-plan/confirm','POST',{batch_id:plan.batch_id});update(await api<Service>(path));})}>Conferma elenco per Lightroom</button>}</>}</>:<button className="primary" disabled={busy} onClick={()=>void action(async()=>setPlan(await api<Plan>(path+'/rating-plan','POST',{revision:s.revision})))}>Prepara anteprima delle modifiche</button>}{error&&<p role="alert" className="warning">{error}</p>}</Modal>}
     {presetEdit&&<Modal title={presetBase?'Modifica preset':'Nuovo preset'} close={()=>setPresetEdit(false)}><form onSubmit={e=>{e.preventDefault();void savePreset();}}><label>Nome<input value={presetName} onChange={e=>setPresetName(e.target.value)} required/></label><label>Istruzioni del preset<textarea rows={4} value={presetInstructions} onChange={e=>setPresetInstructions(e.target.value)}/></label><p>I servizi esistenti mantengono la revisione salvata.</p><button className="primary" disabled={busy||!presetName.trim()}>Salva preset</button>{error&&<p role="alert" className="warning">{error}</p>}</form></Modal>}
     {coverage&&<Modal title="Ultima candidata del gruppo" close={()=>setCoverage(null)}><p>Questo gruppo rimarrà senza candidate dopo la modifica di {coverage.photo.filename}.</p><button className="primary" disabled={busy} onClick={()=>void decide(coverage.photo,coverage.state,coverage.locked,true)}>Conferma modifica</button>{error&&<p role="alert" className="warning">{error}</p>}</Modal>}
   </>;

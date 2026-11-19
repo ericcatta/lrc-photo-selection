@@ -137,3 +137,30 @@ non attestano copertura delle categorie. Errori di rete, consumo non verificabil
 interpretazione o confronto globale continuano a sospendere il flusso.
 Diagnostica sintetica salvata nelle ricevute, senza risposte grezze del provider.
 Nessuna nuova chiamata cloud eseguita durante la correzione.
+
+
+### 2026-11-19 — Flusso guidato Lightroom → web → Lightroom
+
+Implementati i cinque passaggi persistenti, i tre percorsi, la ripresa del
+campione interrotto e il riepilogo del solo esito corrente. Guida locale condivisa
+fra web e Lua; attestazione XMP richiesta prima di abilitare Applica stelle.
+
+Verifiche sintetiche: 193 test backend superati (uno Apple Vision escluso perché
+il relativo helper non è disponibile nel contesto di test), 48 test frontend
+superati, TypeScript e build produzione riusciti. Verifica copie guida e nomi
+comandi riuscita. I test comprendono percorso locale/ibrido/diretto, ripresa,
+incompatibilità, budget insufficiente, incerti, criteri modificati, ripristino
+della fase, piano obsoleto, zero modifiche, esito parziale e focus da tastiera.
+
+Entrambi gli smoke test Chrome headless sono passati su fixture sintetiche:
+nessuna chiamata cloud reale; confronto, decisioni manuali e annulla/ripristina,
+piano esatto, ricevuta simulata, aggiunta, archivio, preset, consenso API,
+riutilizzo dei risultati e assenza di overflow orizzontale a 390 pixel.
+Ispezionato il nuovo provino desktop; colori e stile esistenti mantenuti.
+
+Il backend locale è stato riavviato dopo verifica dello stato inattivo. La lettura
+del servizio esistente ha confermato la fase Esito con 10 candidate e ricevuta
+precedente di 4 stelle applicate; nessuna analisi o nuova applicazione eseguita.
+Il rendering nativo della guida e l’abilitazione del pulsante in Lightroom restano
+da collaudare manualmente dopo ricaricamento del plugin. Il precedente successo
+manuale del flusso non sostituisce il collaudo di questi nuovi dialoghi.

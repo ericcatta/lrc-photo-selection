@@ -46,8 +46,8 @@ export function OpenAISettings() {
       {models.error&&<p className="warning">{models.error}</p>}
       <label>Chiave API<input type="password" value={key} autoComplete="off" spellCheck={false} placeholder={configuration?.key_configured?'Già salvata · inserisci solo per sostituirla':'Inserisci la chiave API'} disabled={busy} onChange={e=>setKey(e.target.value)}/></label>
       <button type="submit" disabled={busy||!compatible||(!configuration?.key_configured&&!key)}>Salva configurazione</button>
-      {saved&&<p role="status">Configurazione salvata; invio foto richiede stima e budget per servizio.</p>}
-      <p className="hint">Salvare la configurazione non invia fotografie. Per ogni servizio scegli la modalità ibrida, imposta il budget e conferma il riepilogo di invio. Il saldo crediti non viene verificato e non vengono acquistati crediti.</p>
+      {saved&&<p role="status">Configurazione salvata. Il prossimo passo è preparare la stima e confermare l’invio.</p>}
+      <p className="hint">Salvare la configurazione non invia fotografie. Scegli un percorso con OpenAI e conferma il riepilogo di invio. Il budget complessivo è facoltativo. Il saldo crediti non viene verificato e non vengono acquistati crediti.</p>
       {configuration?.error&&<p className="warning">{configuration.error}</p>}
       {error&&<p className="warning" role="alert">{error}</p>}
     </form>}

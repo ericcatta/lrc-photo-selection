@@ -37,8 +37,9 @@ try {
   for(let i=0;i<100;i++){count=await evaluate("document.querySelectorAll('.grid .card').length");if(count===6)break;await pause(100);}
   if(count!==6)throw new Error('Expected six synthetic cards');
   await evaluate("Promise.all([document.fonts.ready,...[...document.images].map(i=>i.decode().catch(()=>{}))]).then(()=>true)");
-  const waitFor=async(expression)=>{for(let i=0;i<100;i++){if(await evaluate(expression))return;await pause(100);}throw new Error('UI condition not reached: '+expression);};
+  const waitFor=async(expression)=>{for(let i=0;i<100;i++){if(await evaluate(expression))return;await pause(100);}throw new Error('UI condition not reached: '+expression+' '+await evaluate("JSON.stringify({workflow:document.querySelector('.workflow-panel')?.textContent,errors:[...document.querySelectorAll('[role=alert]')].map(x=>x.textContent)})"));};
   const click=async text=>{const found=await evaluate(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b||b.disabled)return false;b.click();return true;})()`);if(!found)throw new Error('Button unavailable: '+text);};
+  const step=async name=>{const found=await evaluate(`(()=>{const b=[...document.querySelectorAll('.workflow-panel nav button')].find(b=>b.textContent.endsWith(${JSON.stringify(name)}));if(!b)return false;b.click();return true;})()`);if(!found)throw new Error('Workflow step unavailable: '+name);await waitFor(`document.querySelector('.workflow-next h2')?.textContent===${JSON.stringify(name)}`);};
   const request=async(path,method='GET',body)=>await evaluate(`fetch('/api'+${JSON.stringify(path)},{method:${JSON.stringify(method)},headers:{'Content-Type':'application/json'},body:${JSON.stringify(body===undefined?undefined:JSON.stringify(body))}}).then(async r=>({status:r.status,data:await r.json()}))`);
   await evaluate("(()=>{const select=document.querySelector('.card select');select.value='preferred';select.dispatchEvent(new Event('change',{bubbles:true}));})()");
   await waitFor("[...document.querySelectorAll('button')].some(b=>b.textContent==='Annulla decisione'&&!b.disabled)");
@@ -46,15 +47,20 @@ try {
   await waitFor("document.querySelector('.card select').value==='candidate'");
   await click('Ripristina decisione');
   await waitFor("document.querySelector('.card select').value==='preferred'");
+  await evaluate("document.querySelector('.secondary-tools').open=true");
   if(await evaluate("[...document.querySelectorAll('button')].some(b=>b.textContent==='Analizza dettagli locali')")) {
     await click('Analizza dettagli locali');
-    await waitFor("document.querySelector('.job-status')?.textContent.includes('Completata')");
+    await waitFor("fetch('/api/services/synthetic-ui').then(r=>r.json()).then(s=>s.job?.status==='completed')");
+    await waitFor("!document.querySelector('.workflow-panel progress')&&[...document.querySelectorAll('button')].some(b=>b.textContent==='Avvia selezione'&&!b.disabled)");
   }
   await evaluate("document.querySelectorAll('.photo-footer input')[0].click();document.querySelectorAll('.photo-footer input')[1].click();");
   await click('Confronta (2/2)');
   await waitFor("document.querySelector('dialog[open]')?.textContent.includes('Anteprima 600 × 400 px')");
   await click('Chiudi');
+  await step('Lightroom');
+  await waitFor("[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Rivedi le stelle')&&!b.disabled)");
   await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Rivedi le stelle')).click()");
+  await waitFor("document.querySelector('dialog[open]')?.textContent.includes('Prepara anteprima delle modifiche')");
   await click('Prepara anteprima delle modifiche');
   await waitFor("[...document.querySelectorAll('button')].some(b=>b.textContent==='Conferma elenco per Lightroom'&&!b.disabled)");
   await click('Conferma elenco per Lightroom');
@@ -76,14 +82,17 @@ try {
   await waitFor("document.querySelectorAll('.grid .card').length===7");
   const current=await request('/services/synthetic-ui');
   if(current.data.decisions['synthetic-0'].state!=='preferred'||current.data.selected_ids.length!==7||!current.data.requires_analysis)throw new Error('Append lost decisions or candidates');
+  await evaluate("document.querySelector('.secondary-tools').open=true");
   await click('Archivia servizio');
   await waitFor("document.body.textContent.includes('Servizio archiviato.')");
   await click('Riapri servizio');
   await waitFor("[...document.querySelectorAll('button')].some(b=>b.textContent==='Archivia servizio'&&!b.disabled)");
   console.log(JSON.stringify({review:true,comparison:true,exactPlan:true,simulatedReceipt:true,incrementalImport:true,archiveReopen:true,realCatalogAccess:false}));
+  await step('Configura');
   // Show current preset workflow using this isolated synthetic service only.
   await evaluate("(()=>{const label=[...document.querySelectorAll('.config label')].find(x=>x.textContent.startsWith('Parti da un preset'));const select=label?.querySelector('select');if(!select)return false;select.value='nature:1';select.dispatchEvent(new Event('change',{bubbles:true}));return true;})()");
   await waitFor("document.querySelector('.config textarea')?.value!==undefined");
+  await evaluate("document.querySelector('.app-settings').open=true");
   await click('Configurazione OpenAI');
   await waitFor("[...document.querySelectorAll('label')].some(x=>x.textContent==='Chiave API')");
   if(await evaluate("document.querySelector('input[type=password]')?.value!==''"))throw new Error('Screenshot must not contain API key');

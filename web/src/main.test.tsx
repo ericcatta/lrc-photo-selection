@@ -51,7 +51,7 @@ beforeEach(()=>{
   }));
 });
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
-async function workspace(){render(<App/>);await screen.findByRole('option',{name:/TEST SINTETICO/});fireEvent.change(screen.getByLabelText('Servizio'),{target:{value:'synthetic'}});await screen.findByRole('heading',{name:'Configura la selezione'});}
+async function workspace(){render(<App/>);await screen.findByRole('option',{name:/TEST SINTETICO/});fireEvent.change(screen.getByLabelText('Servizio'),{target:{value:'synthetic'}});await screen.findByRole('heading',{name:'TEST SINTETICO'});}
 
 describe('Revisione senza dati reali',()=>{
   it('applica il preset alla bozza e mantiene i criteri modificabili per il servizio',async()=>{
@@ -71,7 +71,7 @@ describe('Revisione senza dati reali',()=>{
   it('filtra la proposta senza cambiare decisioni o stelle',async()=>{
     service={...service,proposal:{selected:['p0','p1'],shortlist:['p1'],groups:[],reasons:{},warnings:[],engine:'synthetic'}};
     await workspace();
-    expect((screen.getByRole('checkbox',{name:'Proposta da rivedere (1)'}) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Mostra') as HTMLSelectElement).value).toBe('proposal');
     expect(screen.getAllByRole('article')).toHaveLength(1);
     expect(screen.getByText('sintetica-1.jpg')).toBeTruthy();
     expect(calls.some(c=>c.method!=='GET')).toBe(false);
@@ -90,7 +90,7 @@ describe('Revisione senza dati reali',()=>{
   it('richiede conferma prima di adottare la proposta senza applicare stelle',async()=>{
     service={...service,proposal:{selected:['p0','p1'],shortlist:['p1'],groups:[],reasons:{},warnings:[],engine:'synthetic'}};
     await workspace();
-    fireEvent.click(screen.getByRole('button',{name:'Usa questa proposta (1)'}));
+    fireEvent.click(screen.getByRole('button',{name:'Conferma selezione'}));
     const dialog=await screen.findByRole('dialog',{name:'Usa la proposta come selezione'});
     expect(calls.some(c=>c.path.endsWith('/accept-shortlist'))).toBe(false);
     fireEvent.click(within(dialog).getByRole('button',{name:'Conferma candidate'}));
@@ -132,6 +132,7 @@ describe('Revisione senza dati reali',()=>{
   });
   it('prepara soltanto il piano stelle e non applica rating dal browser',async()=>{
     await workspace();
+    fireEvent.click(screen.getByRole('button',{name:/4Lightroom/}));
     fireEvent.click(screen.getByRole('button',{name:'Rivedi le stelle'}));
     const dialog=await screen.findByRole('dialog',{name:'Rivedi le stelle'});
     expect(within(dialog).getByText(/Selezione manuale, nessuna analisi eseguita/)).toBeTruthy();
@@ -176,8 +177,10 @@ describe('Revisione senza dati reali',()=>{
   });
   it('riapre un servizio archiviato conservando la revisione',async()=>{
     await workspace();
+    fireEvent.click(screen.getByText('Opzioni del servizio'));
     fireEvent.click(screen.getByRole('button',{name:'Archivia servizio'}));
     await screen.findByText(/Servizio archiviato/);
+    fireEvent.click(screen.getByRole('button',{name:/4Lightroom/}));
     expect((screen.getByRole('button',{name:'Rivedi le stelle'}) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole('button',{name:'Riapri servizio'}));
     await waitFor(()=>expect(service.archived).toBe(false));
@@ -264,7 +267,7 @@ it('nasconde gli avvisi della proposta precedente dopo una modifica ai criteri',
   service={...service,requires_analysis:true,proposal:{selected:['p0','p1'],groups:[],reasons:{},warnings:[obsolete],engine:'exact-preview-v1',stale:true}};
   await workspace();
   expect(screen.queryByText(obsolete)).toBeNull();
-  expect(screen.getByRole('status').textContent).toContain('Avvia la selezione per ottenere una nuova proposta');
+  expect(screen.getByText(/Impostazioni o foto aggiornate/).textContent).toContain('Avvia la selezione per ottenere una nuova proposta');
   expect(screen.getByText(/Risultati precedenti ·/)).toBeTruthy();
   expect(calls.some(c=>c.path.endsWith('/analyze')||c.path.endsWith('/api-confirm'))).toBe(false);
 });
@@ -347,4 +350,100 @@ it('include le incerte nella proposta e nel filtro da rivedere senza applicare d
   expect(screen.getAllByRole('article')).toHaveLength(1);
   expect(screen.getByText('sintetica-1.jpg')).toBeTruthy();
   expect(calls.some(c=>c.method!=='GET')).toBe(false);
+});
+
+function workflow(phase:NonNullable<Service['workflow']>['phase'],path:'local'|'hybrid'|'openai'='local'):NonNullable<Service['workflow']>{
+  return {schema_version:1,path,phase,local_completed:false,proposal_ready:false,proposal_accepted:false,requires_analysis:false,confirmed_batch_id:null,active_batch_id:null,selected_count:2,target:2,outcome:null};
+}
+it('riprende la fase indicata dal servizio e naviga senza avviare operazioni',async()=>{
+  service={...service,workflow:workflow('review'),proposal:{selected:['p0','p1'],shortlist:['p0','p1'],groups:[],reasons:{},warnings:['Dettaglio tecnico sintetico'],engine:'test'}};
+  await workspace();
+  expect(screen.getByRole('button',{name:'Conferma selezione'})).toBeTruthy();
+  expect(screen.queryByRole('heading',{name:'Configura la selezione'})).toBeNull();
+  const navigation=screen.getByRole('navigation',{name:'Passaggi della selezione'});
+  fireEvent.click(within(navigation).getByRole('button',{name:/Configura/}));
+  expect(screen.getByRole('heading',{name:'Configura la selezione'})).toBeTruthy();
+  fireEvent.click(within(navigation).getByRole('button',{name:/Rivedi/}));
+  expect(screen.getAllByRole('article')).toHaveLength(2);
+  expect(calls.some(c=>c.method!=='GET')).toBe(false);
+  expect(screen.getByText('Dettaglio tecnico sintetico').closest('details')?.open).toBe(false);
+});
+it('distingue i tre percorsi senza avviare analisi al cambio di scelta',async()=>{
+  await workspace();
+  const path=screen.getByLabelText('Percorso');
+  expect(within(path).getAllByRole('option').map(x=>x.textContent)).toEqual(['Solo locale','Locale + OpenAI','Direttamente OpenAI']);
+  fireEvent.change(path,{target:{value:'openai'}});
+  expect(screen.getByRole('button',{name:'Continua alla stima OpenAI'})).toBeTruthy();
+  expect(screen.getByLabelText('Selezione finale OpenAI')).toBeTruthy();
+  expect(screen.queryByLabelText('Candidate locali')).toBeNull();
+  expect(calls.some(c=>c.method!=='GET')).toBe(false);
+});
+it('guida il percorso ibrido dalla proposta locale verso OpenAI o revisione locale',async()=>{
+  service={...service,workflow:workflow('analyze','hybrid'),settings:{...service.settings,mode:'hybrid',workflow_path:'hybrid'},proposal:{selected:['p0','p1'],shortlist:['p0','p1'],groups:[],reasons:{},warnings:[],engine:'test'}};
+  await workspace();
+  expect(screen.getByRole('button',{name:'Continua con OpenAI'})).toBeTruthy();
+  fireEvent.click(screen.getByRole('button',{name:'Usa il risultato locale'}));
+  expect(screen.getByRole('button',{name:'Conferma selezione'})).toBeTruthy();
+  expect(calls.some(c=>c.method!=='GET')).toBe(false);
+});
+it('indica come riprendere un invio interrotto senza far partire nuove chiamate',async()=>{
+  service={...service,workflow:workflow('analyze','hybrid'),settings:{...service.settings,mode:'hybrid',workflow_path:'hybrid'},job:{kind:'openai',status:'interrupted',completed:15,total:18,error:'Risposta non valida'}};
+  await workspace();
+  expect(screen.getByRole('button',{name:'Prepara la ripresa'})).toBeTruthy();
+  expect(screen.getByText(/Analisi interrotta: 15 di 18/)).toBeTruthy();
+  expect(calls.some(c=>c.method!=='GET')).toBe(false);
+});
+it('non mostra una ricevuta storica come completamento della selezione corrente',async()=>{
+  service={...service,workflow:workflow('review'),receipts:[{batch_id:'old',results:[{photo_id:'p0',status:'applied',reason:'',before:0,after:1}]}]};
+  await workspace();
+  fireEvent.click(screen.getByRole('button',{name:/5Esito/}));
+  expect(screen.getByText(/Nessuna ricevuta Lightroom disponibile/)).toBeTruthy();
+  expect(screen.queryByText('1 stelle applicate')).toBeNull();
+});
+it('mantiene il target API separato e mostra un esito parziale dopo la ricevuta',async()=>{
+  service={...service,workflow:{...workflow('outcome','hybrid'),target:1,outcome:{applied:1,skipped:0,conflict:1,uncertain:0,total:2}},selected_ids:['p0'],settings:{...service.settings,target:2},proposal:{selected:['p0'],shortlist:['p0'],shortlist_accepted:true,api_target:1,api_plan_id:'api',groups:[],reasons:{},warnings:[],engine:'test'},receipts:[{batch_id:'latest',results:[{photo_id:'p0',status:'applied',reason:'',before:0,after:1},{photo_id:'p1',status:'conflict',reason:'Valutazione cambiata',before:3,after:3}]}]};
+  await workspace();
+  expect(screen.getByText(/Esito parziale:/)).toBeTruthy();
+  expect(screen.queryByText(/sotto il numero richiesto/)).toBeNull();
+});
+
+it('spiega che un piano senza nuove stelle non richiede applicazione',async()=>{
+  const original=globalThis.fetch;
+  vi.stubGlobal('fetch',vi.fn(async(input:string,init?:RequestInit)=>{
+    const result=await original(input,init);
+    if(!String(input).endsWith('/rating-plan'))return result;
+    const plan=await result.json();return json({...plan,items:[]});
+  }));
+  await workspace();
+  fireEvent.click(screen.getByRole('button',{name:/4Lightroom/}));
+  fireEvent.click(screen.getByRole('button',{name:'Rivedi le stelle'}));
+  const dialog=await screen.findByRole('dialog',{name:'Rivedi le stelle'});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Prepara anteprima delle modifiche'}));
+  await within(dialog).findByText(/Nessuna modifica necessaria/);
+  expect(within(dialog).queryByRole('button',{name:'Conferma elenco per Lightroom'})).toBeNull();
+  expect(calls.some(x=>x.path.endsWith('/rating-plan/confirm'))).toBe(false);
+});
+it('impedisce la conferma di un piano stelle superato',async()=>{
+  const original=globalThis.fetch;
+  vi.stubGlobal('fetch',vi.fn(async(input:string,init?:RequestInit)=>{
+    const result=await original(input,init);
+    if(!String(input).endsWith('/rating-plan'))return result;
+    const plan=await result.json();return json({...plan,revision:0});
+  }));
+  await workspace();
+  fireEvent.click(screen.getByRole('button',{name:/4Lightroom/}));
+  fireEvent.click(screen.getByRole('button',{name:'Rivedi le stelle'}));
+  const dialog=await screen.findByRole('dialog',{name:'Rivedi le stelle'});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Prepara anteprima delle modifiche'}));
+  await within(dialog).findByText(/Piano superato/);
+  expect(within(dialog).queryByRole('button',{name:'Conferma elenco per Lightroom'})).toBeNull();
+  expect(calls.some(x=>x.path.endsWith('/rating-plan/confirm'))).toBe(false);
+});
+it('porta il focus al titolo del passaggio e lascia il provino raggiungibile',async()=>{
+  await workspace();
+  fireEvent.click(screen.getByRole('button',{name:/3Rivedi/}));
+  const heading=screen.getByRole('heading',{name:'Rivedi'});
+  await waitFor(()=>expect(document.activeElement).toBe(heading));
+  expect(screen.getAllByRole('article')).toHaveLength(2);
+  expect(calls.some(x=>x.method!=='GET')).toBe(false);
 });
